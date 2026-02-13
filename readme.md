@@ -13,6 +13,8 @@ localStorage に保存
 - tsで書いて
 - ライブラリはcdnで入れて
 
+- gridtypo1.htmlをgridtypo2.htmlにコピーし、 頂点をx軸に平行な線とy軸に平行な線でグリッド状にしてほしい　lil-guiにパラメーター追加して
+
 
 ## トラシュ
 opencv.js のロード完了だけでは使える状態にならず、Module.onRuntimeInitialized を待つ必要がある

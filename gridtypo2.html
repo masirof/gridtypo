@@ -1,0 +1,514 @@
+﻿<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>gridtypo1 - OpenCV Corner Detection</title>
+  <style>
+    :root {
+      color-scheme: light;
+    }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", system-ui, sans-serif;
+      background: #f6f4f0;
+      color: #1b1b1b;
+    }
+    .wrap {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+      padding: 16px;
+    }
+    .stage {
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      padding: 12px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+    }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+    }
+    canvas {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 8px;
+      background: #101010;
+    }
+    .status {
+      font-size: 14px;
+      opacity: 0.8;
+    }
+    @media (min-width: 960px) {
+      .wrap {
+        grid-template-columns: 1.2fr 0.8fr;
+        align-items: start;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="stage">
+      <div class="row">
+        <div class="status" id="status">Loading...</div>
+      </div>
+      <canvas id="output"></canvas>
+    </div>
+    <div class="stage">
+      <div id="gui"></div>
+    </div>
+    <div class="stage">
+      <pre class="log" id="log"></pre>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      const logEl = document.getElementById("log");
+      const statusEl = document.getElementById("status");
+      const log = (message) => {
+        if (!logEl) return;
+        const time = new Date().toISOString().slice(11, 19);
+        logEl.textContent += `[${time}] ${message}\n`;
+      };
+      window.__log = log;
+      window.addEventListener("error", (event) => {
+        log(`Error: ${event.message}`);
+      });
+      window.addEventListener("unhandledrejection", (event) => {
+        log(`Unhandled: ${event.reason}`);
+      });
+      if (statusEl) {
+        log(`Status: ${statusEl.textContent}`);
+      }
+    })();
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/typescript@5.4.5/lib/typescript.js"></script>
+
+  <script id="ts-app" type="text/typescript">
+    import GUI from "https://cdn.jsdelivr.net/npm/lil-gui@0.19/+esm";
+
+    type Mode = "Shi-Tomasi" | "Harris";
+
+    type AppParams = {
+      mode: Mode;
+      maxCorners: number;
+      qualityLevel: number;
+      minDistance: number;
+      blockSize: number;
+      k: number;
+      pointRadius: number;
+      pointColor: string;
+      showPoints: boolean;
+      showSource: boolean;
+      showGrid: boolean;
+      gridColor: string;
+      gridThickness: number;
+      gridAlpha: number;
+      gridMinSpacing: number;
+    };
+
+    declare const cv: typeof import("opencv.js");
+
+    const statusEl = document.getElementById("status") as HTMLDivElement;
+    const canvas = document.getElementById("output") as HTMLCanvasElement;
+    const guiHost = document.getElementById("gui") as HTMLDivElement;
+    const log = (window as unknown as { __log?: (message: string) => void }).__log;
+
+    const params: AppParams = {
+      mode: "Shi-Tomasi",
+      maxCorners: 150,
+      qualityLevel: 0.05,
+      minDistance: 10,
+      blockSize: 2,
+      k: 0.02,
+      pointRadius: 5,
+      pointColor: "#ff0000",
+      showPoints: true,
+      showSource: true,
+      showGrid: true,
+      gridColor: "#44ff00",
+      gridThickness: 2,
+      gridAlpha: 1,
+      gridMinSpacing: 10,
+    };
+
+    const STORAGE_KEY = "gridtypo1-lilgui";
+
+    let sourceImg: HTMLImageElement | null = null;
+    let isCvReady = false;
+    let cvRef: typeof cv | null = null;
+
+    function setStatus(text: string) {
+      statusEl.textContent = text;
+      if (log) {
+        log(`Status: ${text}`);
+      }
+    }
+
+    async function loadImage(): Promise<HTMLImageElement> {
+      const url = "http://172.20.160.1:5500/images/test_S1.jpg";
+      setStatus(`Loading image: ${url}`);
+      if (log) {
+        log("image load start");
+      }
+
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 8000);
+      let blob: Blob;
+      try {
+        const response = await fetch(url, {
+          cache: "no-cache",
+          mode: "cors",
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`Image fetch failed: ${response.status} ${response.statusText}`);
+        }
+        blob = await response.blob();
+      } catch (err) {
+        if (log) {
+          log(`image fetch error: ${err}`);
+        }
+        throw err instanceof Error ? err : new Error("Image fetch failed");
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
+
+      if (log) {
+        log(`image fetched. size=${Math.round(blob.size / 1024)}KB`);
+      }
+
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        const objectUrl = URL.createObjectURL(blob);
+        const decodeTimeout = window.setTimeout(() => {
+          if (log) {
+            log("image decode timeout");
+          }
+          URL.revokeObjectURL(objectUrl);
+          reject(new Error(`Image decode timeout: ${url}`));
+        }, 8000);
+        img.addEventListener("load", () => {
+          window.clearTimeout(decodeTimeout);
+          URL.revokeObjectURL(objectUrl);
+          if (log) {
+            log(`image loaded. size=${img.naturalWidth}x${img.naturalHeight}`);
+          }
+          resolve(img);
+        });
+        img.addEventListener("error", () => {
+          window.clearTimeout(decodeTimeout);
+          URL.revokeObjectURL(objectUrl);
+          if (log) {
+            log("image error event");
+          }
+          reject(new Error(`Failed to load image: ${url}`));
+        });
+        img.src = objectUrl;
+      });
+    }
+
+    function ensureCanvasSize(width: number, height: number) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+
+    function detectAndDraw() {
+      if (!isCvReady || !sourceImg || !cvRef) {
+        return;
+      }
+
+      const maxCorners = Math.max(1, Math.floor(params.maxCorners));
+      const blockSize = Math.max(2, Math.floor(params.blockSize));
+      const pointRadius = Math.max(1, Math.floor(params.pointRadius));
+      const useHarrisDetector = params.mode === "Harris";
+
+      ensureCanvasSize(sourceImg.naturalWidth, sourceImg.naturalHeight);
+
+      const src = cvRef.imread(sourceImg);
+      const gray = new cvRef.Mat();
+      cvRef.cvtColor(src, gray, cvRef.COLOR_RGBA2GRAY, 0);
+
+      const corners = new cvRef.Mat();
+      const mask = new cvRef.Mat();
+      cvRef.goodFeaturesToTrack(
+        gray,
+        corners,
+        maxCorners,
+        params.qualityLevel,
+        params.minDistance,
+        mask,
+        blockSize,
+        useHarrisDetector,
+        params.k
+      );
+
+      const output = new cvRef.Mat();
+      if (params.showSource) {
+        src.copyTo(output);
+      } else {
+        cvRef.cvtColor(gray, output, cvRef.COLOR_GRAY2RGBA, 0);
+      }
+
+      const cornerXs: number[] = [];
+      const cornerYs: number[] = [];
+      for (let i = 0; i < corners.rows; i += 1) {
+        cornerXs.push(corners.data32F[i * 2]);
+        cornerYs.push(corners.data32F[i * 2 + 1]);
+      }
+
+      if (params.showGrid) {
+        const mergedXs = mergeBySpacing(cornerXs, params.gridMinSpacing);
+        const mergedYs = mergeBySpacing(cornerYs, params.gridMinSpacing);
+      const gridColor = hexToScalar(params.gridColor, params.gridAlpha);
+        for (const x of mergedXs) {
+          cvRef.line(
+            output,
+            new cvRef.Point(x, 0),
+            new cvRef.Point(x, output.rows - 1),
+            gridColor,
+            params.gridThickness
+          );
+        }
+        for (const y of mergedYs) {
+          cvRef.line(
+            output,
+            new cvRef.Point(0, y),
+            new cvRef.Point(output.cols - 1, y),
+            gridColor,
+            params.gridThickness
+          );
+        }
+      }
+
+      if (params.showPoints) {
+        const pointColor = hexToScalar(params.pointColor, 1);
+        for (let i = 0; i < corners.rows; i += 1) {
+          const x = corners.data32F[i * 2];
+          const y = corners.data32F[i * 2 + 1];
+          cvRef.circle(output, new cvRef.Point(x, y), pointRadius, pointColor, -1);
+        }
+      }
+
+      cvRef.imshow(canvas, output);
+
+      src.delete();
+      gray.delete();
+      corners.delete();
+      mask.delete();
+      output.delete();
+    }
+
+    function hexToScalar(hex: string, alpha = 1): cv.Scalar {
+      const normalized = hex.replace("#", "");
+      const r = parseInt(normalized.substring(0, 2), 16) || 0;
+      const g = parseInt(normalized.substring(2, 4), 16) || 0;
+      const b = parseInt(normalized.substring(4, 6), 16) || 0;
+      const a = Math.max(0, Math.min(1, alpha));
+      // output is RGBA, so use RGBA order
+      return new cvRef!.Scalar(r, g, b, Math.round(a * 255));
+    }
+
+    function mergeBySpacing(values: number[], minSpacing: number): number[] {
+      if (values.length === 0) {
+        return [];
+      }
+      const sorted = [...values].sort((a, b) => a - b);
+      const merged: number[] = [];
+      let current = sorted[0];
+      let count = 1;
+      for (let i = 1; i < sorted.length; i += 1) {
+        const value = sorted[i];
+        if (Math.abs(value - current) <= minSpacing) {
+          current = (current * count + value) / (count + 1);
+          count += 1;
+        } else {
+          merged.push(current);
+          current = value;
+          count = 1;
+        }
+      }
+      merged.push(current);
+      return merged;
+    }
+
+    function setupGui() {
+      const gui = new GUI({ container: guiHost, title: "OpenCV" });
+      gui.add(params, "mode", ["Shi-Tomasi", "Harris"]).name("mode").onChange(detectAndDraw);
+      gui.add(params, "maxCorners", 10, 1000, 1).name("maxCorners").onChange(detectAndDraw);
+      gui.add(params, "qualityLevel", 0.001, 0.2, 0.001).name("qualityLevel").onChange(detectAndDraw);
+      gui.add(params, "minDistance", 1, 50, 1).name("minDistance").onChange(detectAndDraw);
+      gui.add(params, "blockSize", 2, 15, 1).name("blockSize").onChange(detectAndDraw);
+      gui.add(params, "k", 0.01, 0.1, 0.005).name("k").onChange(detectAndDraw);
+      gui.add(params, "pointRadius", 1, 10, 1).name("pointRadius").onChange(detectAndDraw);
+      gui.addColor(params, "pointColor").name("pointColor").onChange(detectAndDraw);
+      gui.add(params, "showPoints").name("showPoints").onChange(detectAndDraw);
+      gui.add(params, "showSource").name("showSource").onChange(detectAndDraw);
+      gui.add(params, "showGrid").name("showGrid").onChange(detectAndDraw);
+      gui.addColor(params, "gridColor").name("gridColor").onChange(detectAndDraw);
+      gui.add(params, "gridThickness", 1, 6, 1).name("gridThickness").onChange(detectAndDraw);
+      gui.add(params, "gridAlpha", 0.1, 1, 0.05).name("gridAlpha").onChange(detectAndDraw);
+      gui.add(params, "gridMinSpacing", 1, 30, 1).name("gridMinSpacing").onChange(detectAndDraw);
+
+      const copyText = async (text: string) => {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+          return;
+        }
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      };
+
+      const io = {
+        save: () => {
+          const data = gui.save();
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        },
+        load: () => {
+          const saved = localStorage.getItem(STORAGE_KEY);
+          if (!saved) {
+            return;
+          }
+          gui.load(JSON.parse(saved));
+          detectAndDraw();
+        },
+        reset: () => {
+          gui.reset();
+          detectAndDraw();
+        },
+        copy: async () => {
+          const data = gui.save();
+          await copyText(JSON.stringify(data, null, 2));
+          setStatus("Preset copied to clipboard");
+        },
+      };
+
+      gui.add(io, "save").name("save preset");
+      gui.add(io, "load").name("load preset");
+      gui.add(io, "reset").name("reset");
+      gui.add(io, "copy").name("copy preset");
+    }
+
+    function loadOpenCvScript(): Promise<void> {
+      return new Promise((resolve, reject) => {
+        const existing = document.getElementById("opencv-script");
+        if (existing) {
+          resolve();
+          return;
+        }
+        const script = document.createElement("script");
+        script.id = "opencv-script";
+        script.async = true;
+        script.src = "https://docs.opencv.org/4.x/opencv.js";
+        script.onload = () => {
+          if (log) {
+            log("opencv.js loaded");
+          }
+          resolve();
+        };
+        script.onerror = () => {
+          if (log) {
+            log("opencv.js failed to load");
+          }
+          reject(new Error("opencv.js failed to load"));
+        };
+        document.head.appendChild(script);
+      });
+    }
+
+    function waitForCvReady(timeoutMs = 15000): Promise<void> {
+      return new Promise((resolve, reject) => {
+        const start = performance.now();
+        const timer = window.setInterval(() => {
+          if (isCvReady) {
+            window.clearInterval(timer);
+            resolve();
+            return;
+          }
+          if (performance.now() - start > timeoutMs) {
+            window.clearInterval(timer);
+            reject(new Error("OpenCV init timeout"));
+          }
+        }, 100);
+      });
+    }
+
+    async function bootstrap() {
+      setupGui();
+      try {
+        const img = await loadImage();
+        sourceImg = img;
+        setStatus("Image loaded. Loading OpenCV...");
+        (window as unknown as {
+          Module?: {
+            onRuntimeInitialized?: () => void;
+            locateFile?: (path: string) => string;
+            printErr?: (text: string) => void;
+          };
+        }).Module = {
+          locateFile: (path: string) => `https://docs.opencv.org/4.x/${path}`,
+          printErr: (text: string) => {
+            if (log) {
+              log(`opencv err: ${text}`);
+            }
+          },
+          onRuntimeInitialized: () => {
+            cvRef = (window as unknown as { cv?: typeof cv }).cv ?? null;
+            if (log) {
+              log("onRuntimeInitialized");
+            }
+            if (cvRef) {
+              isCvReady = true;
+            }
+          },
+        };
+        await loadOpenCvScript();
+        await waitForCvReady();
+        setStatus("OpenCV ready");
+        detectAndDraw();
+        setStatus("Ready");
+      } catch (err) {
+        setStatus(err instanceof Error ? err.message : "Failed");
+      }
+    }
+
+    bootstrap();
+  </script>
+
+  <script>
+    (async () => {
+      const tsScript = document.getElementById("ts-app");
+      if (!tsScript || !window.ts) {
+        return;
+      }
+      const source = tsScript.textContent || "";
+      const result = window.ts.transpileModule(source, {
+        compilerOptions: {
+          target: window.ts.ScriptTarget.ES2020,
+          module: window.ts.ModuleKind.ES2020,
+          strict: true,
+          esModuleInterop: true,
+        },
+      });
+      const blob = new Blob([result.outputText], { type: "text/javascript" });
+      const url = URL.createObjectURL(blob);
+      await import(url);
+      URL.revokeObjectURL(url);
+    })();
+  </script>
+</body>
+</html>
