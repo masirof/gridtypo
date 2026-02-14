@@ -112,6 +112,8 @@
       gridThickness: number;
       gridAlpha: number;
       gridMinSpacing: number;
+      gridFillMissing: boolean;
+      gridTargetSpacing: number;
     };
 
     declare const cv: typeof import("opencv.js");
@@ -137,6 +139,8 @@
       gridThickness: 2,
       gridAlpha: 1,
       gridMinSpacing: 10,
+      gridFillMissing: true,
+      gridTargetSpacing: 0,
     };
 
     const STORAGE_KEY = "gridtypo1-lilgui";
@@ -267,8 +271,14 @@
       if (params.showGrid) {
         const mergedXs = mergeBySpacing(cornerXs, params.gridMinSpacing);
         const mergedYs = mergeBySpacing(cornerYs, params.gridMinSpacing);
-      const gridColor = hexToScalar(params.gridColor, params.gridAlpha);
-        for (const x of mergedXs) {
+        const gridXs = params.gridFillMissing
+          ? fillMissingLines(mergedXs, params.gridTargetSpacing)
+          : mergedXs;
+        const gridYs = params.gridFillMissing
+          ? fillMissingLines(mergedYs, params.gridTargetSpacing)
+          : mergedYs;
+        const gridColor = hexToScalar(params.gridColor, params.gridAlpha);
+        for (const x of gridXs) {
           cvRef.line(
             output,
             new cvRef.Point(x, 0),
@@ -277,7 +287,7 @@
             params.gridThickness
           );
         }
-        for (const y of mergedYs) {
+        for (const y of gridYs) {
           cvRef.line(
             output,
             new cvRef.Point(0, y),
@@ -339,6 +349,48 @@
       return merged;
     }
 
+    function fillMissingLines(values: number[], targetSpacing: number): number[] {
+      if (values.length < 2) {
+        return values;
+      }
+      const sorted = [...values].sort((a, b) => a - b);
+      const gaps: number[] = [];
+      for (let i = 1; i < sorted.length; i += 1) {
+        gaps.push(sorted[i] - sorted[i - 1]);
+      }
+      const spacing = targetSpacing > 0 ? targetSpacing : median(gaps);
+      if (!Number.isFinite(spacing) || spacing <= 0) {
+        return sorted;
+      }
+      const filled: number[] = [sorted[0]];
+      for (let i = 1; i < sorted.length; i += 1) {
+        const prev = sorted[i - 1];
+        const next = sorted[i];
+        const gap = next - prev;
+        const steps = Math.round(gap / spacing);
+        if (steps > 1) {
+          const stepSize = gap / steps;
+          for (let s = 1; s < steps; s += 1) {
+            filled.push(prev + stepSize * s);
+          }
+        }
+        filled.push(next);
+      }
+      return filled;
+    }
+
+    function median(values: number[]): number {
+      if (values.length === 0) {
+        return 0;
+      }
+      const sorted = [...values].sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      if (sorted.length % 2 === 0) {
+        return (sorted[mid - 1] + sorted[mid]) / 2;
+      }
+      return sorted[mid];
+    }
+
     function setupGui() {
       const gui = new GUI({ container: guiHost, title: "OpenCV" });
       gui.add(params, "mode", ["Shi-Tomasi", "Harris"]).name("mode").onChange(detectAndDraw);
@@ -356,6 +408,8 @@
       gui.add(params, "gridThickness", 1, 6, 1).name("gridThickness").onChange(detectAndDraw);
       gui.add(params, "gridAlpha", 0.1, 1, 0.05).name("gridAlpha").onChange(detectAndDraw);
       gui.add(params, "gridMinSpacing", 1, 30, 1).name("gridMinSpacing").onChange(detectAndDraw);
+      gui.add(params, "gridFillMissing").name("gridFillMissing").onChange(detectAndDraw);
+      gui.add(params, "gridTargetSpacing", 0, 100, 1).name("gridTargetSpacing").onChange(detectAndDraw);
 
       const copyText = async (text: string) => {
         if (navigator.clipboard && window.isSecureContext) {
