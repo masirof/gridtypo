@@ -97,6 +97,8 @@
     type Mode = "Shi-Tomasi" | "Harris";
 
     type AppParams = {
+      imagePath: string;
+      imageFile: string;
       mode: Mode;
       maxCorners: number;
       qualityLevel: number;
@@ -124,6 +126,8 @@
     const log = (window as unknown as { __log?: (message: string) => void }).__log;
 
     const params: AppParams = {
+      imagePath: "images",
+      imageFile: "test_P1.jpg",
       mode: "Shi-Tomasi",
       maxCorners: 150,
       qualityLevel: 0.05,
@@ -148,6 +152,8 @@
     let sourceImg: HTMLImageElement | null = null;
     let isCvReady = false;
     let cvRef: typeof cv | null = null;
+    let imageOptions = ["test_P1.jpg", "test_S1.jpg"];
+    let imageFileController: GUIController<string> | null = null;
 
     function setStatus(text: string) {
       statusEl.textContent = text;
@@ -156,9 +162,9 @@
       }
     }
 
-    async function loadImage(): Promise<HTMLImageElement> {
-      const url = "http://172.20.160.1:5500/images/test_S1.jpg";
-      setStatus(`Loading image: ${url}`);
+    async function loadImage(url: string): Promise<HTMLImageElement> {
+      const normalizedUrl = normalizePath(url);
+      setStatus(`Loading image: ${normalizedUrl}`);
       if (log) {
         log("image load start");
       }
@@ -167,7 +173,7 @@
       const timeoutId = window.setTimeout(() => controller.abort(), 8000);
       let blob: Blob;
       try {
-        const response = await fetch(url, {
+        const response = await fetch(normalizedUrl, {
           cache: "no-cache",
           mode: "cors",
           signal: controller.signal,
@@ -197,7 +203,7 @@
             log("image decode timeout");
           }
           URL.revokeObjectURL(objectUrl);
-          reject(new Error(`Image decode timeout: ${url}`));
+          reject(new Error(`Image decode timeout: ${normalizedUrl}`));
         }, 8000);
         img.addEventListener("load", () => {
           window.clearTimeout(decodeTimeout);
@@ -213,7 +219,7 @@
           if (log) {
             log("image error event");
           }
-          reject(new Error(`Failed to load image: ${url}`));
+          reject(new Error(`Failed to load image: ${normalizedUrl}`));
         });
         img.src = objectUrl;
       });
@@ -393,6 +399,14 @@
 
     function setupGui() {
       const gui = new GUI({ container: guiHost, title: "OpenCV" });
+      gui.add(params, "imagePath").name("imagePath").onFinishChange(() => {
+        handleImagePathChange();
+      });
+      imageFileController = gui.add(params, "imageFile", imageOptions).name("imageFile").onChange((value: string) => {
+        const folder = getFolderPath(params.imagePath);
+        params.imagePath = joinPath(folder, value);
+        reloadImage();
+      });
       gui.add(params, "mode", ["Shi-Tomasi", "Harris"]).name("mode").onChange(detectAndDraw);
       gui.add(params, "maxCorners", 10, 1000, 1).name("maxCorners").onChange(detectAndDraw);
       gui.add(params, "qualityLevel", 0.001, 0.2, 0.001).name("qualityLevel").onChange(detectAndDraw);
@@ -501,11 +515,115 @@
       });
     }
 
+    function normalizePath(path: string): string {
+      return path.replace(/\\/g, "/");
+    }
+
+    function getFolderPath(path: string): string {
+      const normalized = normalizePath(path);
+      if (normalized.endsWith("/")) {
+        return normalized;
+      }
+      const lastSlash = normalized.lastIndexOf("/");
+      if (lastSlash === -1) {
+        return "";
+      }
+      return `${normalized.slice(0, lastSlash + 1)}`;
+    }
+
+    function basename(path: string): string {
+      const normalized = normalizePath(path);
+      const parts = normalized.split("/");
+      return parts[parts.length - 1] || "";
+    }
+
+    function joinPath(base: string, file: string): string {
+      const cleanBase = normalizePath(base);
+      const cleanFile = basename(file);
+      const prefix = cleanBase && !cleanBase.endsWith("/") ? `${cleanBase}/` : cleanBase;
+      return `${prefix}${cleanFile}`;
+    }
+
+    function looksLikeFolder(path: string): boolean {
+      const normalized = normalizePath(path);
+      if (normalized.endsWith("/")) {
+        return true;
+      }
+      const lastPart = normalized.split("/").pop() ?? "";
+      return !lastPart.includes(".");
+    }
+
+    async function discoverImages(folderPath: string): Promise<string[]> {
+      const normalizedFolder = normalizePath(folderPath);
+      const base = normalizedFolder.endsWith("/") ? normalizedFolder : `${normalizedFolder}/`;
+      const response = await fetch(base, { cache: "no-cache" });
+      if (!response.ok) {
+        throw new Error(`Folder fetch failed: ${response.status} ${response.statusText}`);
+      }
+      const html = await response.text();
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, "text/html");
+      const links = Array.from(doc.querySelectorAll("a"))
+        .map((anchor) => anchor.getAttribute("href") || "")
+        .filter((href) => href && !href.startsWith("?") && !href.startsWith("#"));
+      const files = links
+        .map((href) => href.split("?")[0])
+        .map((href) => href.split("#")[0])
+        .map((href) => href.replace(/^\.?\//, ""))
+        .filter((href) => /\.(png|jpg|jpeg|webp|bmp|gif)$/i.test(href))
+        .map((href) => basename(href));
+      return Array.from(new Set(files)).sort();
+    }
+
+    async function handleImagePathChange() {
+      const inputPath = normalizePath(params.imagePath.trim());
+      if (!inputPath) {
+        return;
+      }
+      if (looksLikeFolder(inputPath)) {
+        try {
+          setStatus(`Scanning folder: ${inputPath}`);
+          const files = await discoverImages(inputPath);
+          if (files.length === 0) {
+            setStatus("No images found in folder.");
+            return;
+          }
+          imageOptions = files;
+          params.imageFile = files[0];
+          params.imagePath = joinPath(inputPath, params.imageFile);
+          if (imageFileController) {
+            imageFileController.options(imageOptions);
+            imageFileController.updateDisplay();
+          }
+          await reloadImage();
+        } catch (err) {
+          setStatus(err instanceof Error ? err.message : "Folder scan failed");
+        }
+        return;
+      }
+      await reloadImage();
+    }
+
+    async function reloadImage() {
+      sourceImg = null;
+      try {
+        const img = await loadImage(params.imagePath);
+        sourceImg = img;
+        setStatus("Image loaded.");
+        if (isCvReady) {
+          detectAndDraw();
+          setStatus("Ready");
+        }
+      } catch (err) {
+        setStatus(err instanceof Error ? err.message : "Failed");
+      }
+    }
+
     async function bootstrap() {
       setupGui();
       try {
-        const img = await loadImage();
-        sourceImg = img;
+        setStatus("Initializing image...");
+        await handleImagePathChange();
         setStatus("Image loaded. Loading OpenCV...");
         (window as unknown as {
           Module?: {
