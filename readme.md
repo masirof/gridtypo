@@ -20,6 +20,8 @@ localStorage に保存
 
 - test_P1.jpgを読み込みたい　lil guiでimages\test_P1.jpg　\images配下までのパスを入れるやつと、\imagse配下の画像ファイルをドロップダウンで選択できるやつほしい
 
+- n点の頂点を通る線を表示する機能　n点をGUIに min1~max5
+
 ## トラシュ
 opencv.js のロード完了だけでは使える状態にならず、Module.onRuntimeInitialized を待つ必要がある
 

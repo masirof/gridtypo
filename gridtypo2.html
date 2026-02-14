@@ -114,6 +114,7 @@
       gridThickness: number;
       gridAlpha: number;
       gridMinSpacing: number;
+      gridMinPoints: number;
       gridFillMissing: boolean;
       gridTargetSpacing: number;
     };
@@ -127,7 +128,7 @@
 
     const params: AppParams = {
       imagePath: "images",
-      imageFile: "test_P1.jpg",
+      imageFile: "test_S1.jpg",
       mode: "Shi-Tomasi",
       maxCorners: 150,
       qualityLevel: 0.05,
@@ -143,6 +144,7 @@
       gridThickness: 2,
       gridAlpha: 1,
       gridMinSpacing: 10,
+      gridMinPoints: 2,
       gridFillMissing: true,
       gridTargetSpacing: 0,
     };
@@ -277,12 +279,19 @@
       if (params.showGrid) {
         const mergedXs = mergeBySpacing(cornerXs, params.gridMinSpacing);
         const mergedYs = mergeBySpacing(cornerYs, params.gridMinSpacing);
+        const tolerance = Math.max(2, params.gridMinSpacing);
+        const filteredXs = mergedXs.filter(
+          (x) => countPointsNearLine(cornerXs, x, tolerance) >= params.gridMinPoints
+        );
+        const filteredYs = mergedYs.filter(
+          (y) => countPointsNearLine(cornerYs, y, tolerance) >= params.gridMinPoints
+        );
         const gridXs = params.gridFillMissing
-          ? fillMissingLines(mergedXs, params.gridTargetSpacing)
-          : mergedXs;
+          ? fillMissingLines(filteredXs, params.gridTargetSpacing)
+          : filteredXs;
         const gridYs = params.gridFillMissing
-          ? fillMissingLines(mergedYs, params.gridTargetSpacing)
-          : mergedYs;
+          ? fillMissingLines(filteredYs, params.gridTargetSpacing)
+          : filteredYs;
         const gridColor = hexToScalar(params.gridColor, params.gridAlpha);
         for (const x of gridXs) {
           cvRef.line(
@@ -355,6 +364,16 @@
       return merged;
     }
 
+    function countPointsNearLine(values: number[], line: number, tolerance: number): number {
+      let count = 0;
+      for (const value of values) {
+        if (Math.abs(value - line) <= tolerance) {
+          count += 1;
+        }
+      }
+      return count;
+    }
+
     function fillMissingLines(values: number[], targetSpacing: number): number[] {
       if (values.length < 2) {
         return values;
@@ -422,6 +441,7 @@
       gui.add(params, "gridThickness", 1, 6, 1).name("gridThickness").onChange(detectAndDraw);
       gui.add(params, "gridAlpha", 0.1, 1, 0.05).name("gridAlpha").onChange(detectAndDraw);
       gui.add(params, "gridMinSpacing", 1, 30, 1).name("gridMinSpacing").onChange(detectAndDraw);
+      gui.add(params, "gridMinPoints", 1, 5, 1).name("gridMinPoints").onChange(detectAndDraw);
       gui.add(params, "gridFillMissing").name("gridFillMissing").onChange(detectAndDraw);
       gui.add(params, "gridTargetSpacing", 0, 100, 1).name("gridTargetSpacing").onChange(detectAndDraw);
 
