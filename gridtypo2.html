@@ -125,6 +125,10 @@
     const canvas = document.getElementById("output") as HTMLCanvasElement;
     const guiHost = document.getElementById("gui") as HTMLDivElement;
     const log = (window as unknown as { __log?: (message: string) => void }).__log;
+    const OPENCV_BASE = "lib/opencv/";
+    const OPENCV_SCRIPT = `${OPENCV_BASE}opencv.js`;
+    const OPENCV_WASM_CANDIDATES = ["opencv.wasm"];
+    const OPENCV_EMBEDDED_WASM = true;
 
     const params: AppParams = {
       imagePath: "images",
@@ -501,7 +505,8 @@
         const script = document.createElement("script");
         script.id = "opencv-script";
         script.async = true;
-        script.src = "https://docs.opencv.org/4.x/opencv.js";
+        script.crossOrigin = "anonymous";
+        script.src = OPENCV_SCRIPT;
         script.onload = () => {
           if (log) {
             log("opencv.js loaded");
@@ -523,6 +528,17 @@
         const start = performance.now();
         const timer = window.setInterval(() => {
           if (isCvReady) {
+            window.clearInterval(timer);
+            resolve();
+            return;
+          }
+          const candidate = (window as unknown as { cv?: typeof cv }).cv;
+          if (candidate && (candidate as typeof cv).Mat) {
+            cvRef = candidate as typeof cv;
+            isCvReady = true;
+            if (log) {
+              log("cv detected by polling");
+            }
             window.clearInterval(timer);
             resolve();
             return;
@@ -639,34 +655,81 @@
       }
     }
 
+    async function loadOpenCvWasmBinary(): Promise<{ binary: Uint8Array; url: string }> {
+      let lastError: Error | null = null;
+      for (const file of OPENCV_WASM_CANDIDATES) {
+        const wasmUrl = `${OPENCV_BASE}${file}`;
+        if (log) {
+          log(`fetch wasm: ${wasmUrl}`);
+        }
+        try {
+          const response = await fetch(wasmUrl, { cache: "no-cache", mode: "cors" });
+          if (!response.ok) {
+            throw new Error(`opencv.wasm fetch failed: ${response.status} ${response.statusText}`);
+          }
+          const buffer = await response.arrayBuffer();
+          return { binary: new Uint8Array(buffer), url: wasmUrl };
+        } catch (err) {
+          if (log) {
+            log(`wasm fetch error: ${err}`);
+          }
+          lastError = err instanceof Error ? err : new Error("opencv.wasm fetch failed");
+        }
+      }
+      throw lastError ?? new Error("opencv.wasm fetch failed");
+    }
+
     async function bootstrap() {
       setupGui();
       try {
         setStatus("Initializing image...");
         await handleImagePathChange();
         setStatus("Image loaded. Loading OpenCV...");
-        (window as unknown as {
-          Module?: {
-            onRuntimeInitialized?: () => void;
-            locateFile?: (path: string) => string;
-            printErr?: (text: string) => void;
+        const wasmPayload = OPENCV_EMBEDDED_WASM ? null : await loadOpenCvWasmBinary();
+        const cvModule =
+          (window as unknown as { cv?: Record<string, unknown> }).cv ??
+          ({} as Record<string, unknown>);
+        (window as unknown as { cv?: Record<string, unknown> }).cv = cvModule;
+        if (wasmPayload) {
+          cvModule.locateFile = (path: string) => {
+            const resolved = path.endsWith(".wasm") ? wasmPayload.url : `${OPENCV_BASE}${path}`;
+            if (log) {
+              log(`locateFile: ${path} -> ${resolved}`);
+            }
+            return resolved;
           };
-        }).Module = {
-          locateFile: (path: string) => `https://docs.opencv.org/4.x/${path}`,
-          printErr: (text: string) => {
-            if (log) {
-              log(`opencv err: ${text}`);
-            }
-          },
-          onRuntimeInitialized: () => {
-            cvRef = (window as unknown as { cv?: typeof cv }).cv ?? null;
-            if (log) {
-              log("onRuntimeInitialized");
-            }
-            if (cvRef) {
-              isCvReady = true;
-            }
-          },
+          cvModule.wasmBinary = wasmPayload.binary.buffer;
+          cvModule.wasmBinaryFile = wasmPayload.url;
+          cvModule.instantiateWasm = (
+            imports: WebAssembly.Imports,
+            successCallback: (instance: WebAssembly.Instance, module: WebAssembly.Module) => void
+          ) => {
+            WebAssembly.instantiate(wasmPayload.binary, imports)
+              .then((result) => {
+                successCallback(result.instance, result.module);
+              })
+              .catch((err) => {
+                if (log) {
+                  log(`instantiateWasm error: ${err}`);
+                }
+                throw err;
+              });
+            return {};
+          };
+        }
+        cvModule.printErr = (text: string) => {
+          if (log) {
+            log(`opencv err: ${text}`);
+          }
+        };
+        cvModule.onRuntimeInitialized = () => {
+          cvRef = (window as unknown as { cv?: typeof cv }).cv ?? null;
+          if (log) {
+            log("onRuntimeInitialized");
+          }
+          if (cvRef) {
+            isCvReady = true;
+          }
         };
         await loadOpenCvScript();
         await waitForCvReady();

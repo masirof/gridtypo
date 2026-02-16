@@ -1,0 +1,19 @@
+{
+  "name": "gridtypo",
+  "version": "1.0.0",
+  "description": "- opencv\r - canvas\r - lil-gui",
+  "main": "index.js",
+  "directories": {
+    "lib": "lib"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@techstark/opencv-js": "^4.12.0-release.1"
+  }
+}
