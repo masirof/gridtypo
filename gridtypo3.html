@@ -117,6 +117,15 @@
       gridMinPoints: number;
       gridFillMissing: boolean;
       gridTargetSpacing: number;
+      showContours: boolean;
+      contourColor: string;
+      contourThickness: number;
+      showHierarchy: boolean;
+      hierarchyColor: string;
+      hierarchyFontScale: number;
+      contourMinAreaPercent: number;
+      contourSmooth: boolean;
+      contourSmoothEpsilonPx: number;
     };
 
     declare const cv: typeof import("opencv.js");
@@ -151,6 +160,15 @@
       gridMinPoints: 2,
       gridFillMissing: true,
       gridTargetSpacing: 0,
+      showContours: true,
+      contourColor: "#3366ff",
+      contourThickness: 2,
+      showHierarchy: true,
+      hierarchyColor: "#6670ff",
+      hierarchyFontScale: 1,
+      contourMinAreaPercent: 1,
+      contourSmooth: true,
+      contourSmoothEpsilonPx: 1,
     };
 
     const STORAGE_KEY = "gridtypo1-lilgui";
@@ -273,6 +291,190 @@
         cvRef.cvtColor(gray, output, cvRef.COLOR_GRAY2RGBA, 0);
       }
 
+      const edges = new cvRef.Mat();
+      cvRef.Canny(gray, edges, 60, 120);
+      const contours = new cvRef.MatVector();
+      const hierarchy = new cvRef.Mat();
+      cvRef.findContours(edges, contours, hierarchy, cvRef.RETR_TREE, cvRef.CHAIN_APPROX_SIMPLE);
+
+      const minArea =
+        (params.contourMinAreaPercent / 100) *
+        (sourceImg.naturalWidth * sourceImg.naturalHeight);
+      if (params.showContours) {
+        const contourColor = hexToScalar(params.contourColor, 1);
+        for (let i = 0; i < contours.size(); i += 1) {
+          const contour = contours.get(i);
+          const area = Math.abs(cvRef.contourArea(contour));
+          contour.delete();
+          if (area < minArea) {
+            continue;
+          }
+          if (params.contourSmooth) {
+            const raw = contours.get(i);
+            const approx = new cvRef.Mat();
+            cvRef.approxPolyDP(raw, approx, params.contourSmoothEpsilonPx, true);
+            const vec = new cvRef.MatVector();
+            vec.push_back(approx);
+            cvRef.drawContours(output, vec, 0, contourColor, params.contourThickness);
+            vec.delete();
+            raw.delete();
+            approx.delete();
+          } else {
+            cvRef.drawContours(output, contours, i, contourColor, params.contourThickness);
+          }
+        }
+      }
+
+      if (params.showHierarchy && hierarchy.data32S) {
+        const hierarchyColor = hexToScalar(params.hierarchyColor, 1);
+        const bestByDepth = new Map<
+          number,
+          { area: number; x: number; y: number; n: cv.Vec2; index: number; center: cv.Vec2 }
+        >();
+        const depthTargets: {
+          depth: number;
+          x: number;
+          y: number;
+          n: cv.Vec2;
+          index: number;
+          center: cv.Vec2;
+        }[] = [];
+        for (let i = 0; i < contours.size(); i += 1) {
+          const contour = contours.get(i);
+          const area = Math.abs(cvRef.contourArea(contour));
+          if (area < minArea) {
+            contour.delete();
+            continue;
+          }
+          const depth = getHierarchyDepth(i, hierarchy.data32S);
+          const topRight = getContourTopRightWithNormal(contour);
+          const x = topRight.x;
+          const y = topRight.y;
+          const n = topRight.n;
+          const c = getContourCentroid(contour);
+          contour.delete();
+          const current = bestByDepth.get(depth);
+          if (!current || area > current.area) {
+            bestByDepth.set(depth, { area, x, y, n, index: i, center: c });
+          }
+        }
+        for (const [depth, data] of bestByDepth.entries()) {
+          if (depth !== 0 && depth !== 1) {
+            continue;
+          }
+          let x = data.x;
+          let y = data.y;
+          depthTargets.push({ depth, x, y, n: data.n, index: data.index, center: data.center });
+        }
+        depthTargets.sort((a, b) => a.depth - b.depth);
+        const placed: { x: number; y: number }[] = [];
+        const jitter = 10;
+        const offset = Math.max(6, params.contourThickness * 3);
+        for (const target of depthTargets) {
+          let x = target.x;
+          let y = target.y;
+          if (x < 0) {
+            x = 0;
+          }
+          if (y < 0) {
+            y = 0;
+          }
+          if (x > output.cols - 1) {
+            x = output.cols - 1;
+          }
+          if (y > output.rows - 1) {
+            y = output.rows - 1;
+          }
+          for (const prev of placed) {
+            const dx = x - prev.x;
+            const dy = y - prev.y;
+            if (dx * dx + dy * dy < jitter * jitter) {
+              x = Math.min(output.cols - 1, x + jitter);
+              y = Math.min(output.rows - 1, y + jitter);
+            }
+          }
+          const contourForTest = contours.get(target.index);
+          const vx = target.center[0] - x;
+          const vy = target.center[1] - y;
+          const vlen = Math.hypot(vx, vy);
+          let nx = 0;
+          let ny = 0;
+          if (vlen > 1e-3) {
+            nx = vx / vlen;
+            ny = vy / vlen;
+          } else {
+            nx = target.n[0];
+            ny = target.n[1];
+          }
+          const testInX = x + nx * offset;
+          const testInY = y + ny * offset;
+          const testOutX = x - nx * offset;
+          const testOutY = y - ny * offset;
+          const insideIn = cvRef.pointPolygonTest(
+            contourForTest,
+            new cvRef.Point(testInX, testInY),
+            false
+          );
+          const insideOut = cvRef.pointPolygonTest(
+            contourForTest,
+            new cvRef.Point(testOutX, testOutY),
+            false
+          );
+          if (insideIn <= 0 && insideOut > 0) {
+            nx = -nx;
+            ny = -ny;
+          }
+          let innerX = x + nx * offset * 10;
+          let innerY = y + ny * offset * 3;
+          let innerInside = cvRef.pointPolygonTest(
+            contourForTest,
+            new cvRef.Point(innerX, innerY),
+            false
+          );
+          if (innerInside <= 0) {
+            for (let step = 2; step <= 6 && innerInside <= 0; step += 1) {
+              innerX = x + nx * offset * step;
+              innerY = y + ny * offset * step;
+              innerInside = cvRef.pointPolygonTest(
+                contourForTest,
+                new cvRef.Point(innerX, innerY),
+                false
+              );
+            }
+          }
+          const outerX = x - nx * offset;
+          const outerY = y - ny * offset;
+          innerX = clamp(innerX, 0, output.cols - 1);
+          innerY = clamp(innerY, 0, output.rows - 1);
+          const clampedOuterX = clamp(outerX, 0, output.cols - 1);
+          const clampedOuterY = clamp(outerY, 0, output.rows - 1);
+          if (target.depth === 1) {
+            cvRef.putText(
+              output,
+              "1",
+              new cvRef.Point(innerX, innerY),
+              cvRef.FONT_HERSHEY_SIMPLEX,
+              params.hierarchyFontScale,
+              hierarchyColor,
+              2
+            );
+          }
+          if (target.depth === 0) {
+            cvRef.putText(
+              output,
+              "0",
+              new cvRef.Point(clampedOuterX, clampedOuterY),
+              cvRef.FONT_HERSHEY_SIMPLEX,
+              params.hierarchyFontScale,
+              hierarchyColor,
+              2
+            );
+          }
+          placed.push({ x, y });
+          contourForTest.delete();
+        }
+      }
+
       const cornerXs: number[] = [];
       const cornerYs: number[] = [];
       for (let i = 0; i < corners.rows; i += 1) {
@@ -332,6 +534,9 @@
       gray.delete();
       corners.delete();
       mask.delete();
+      edges.delete();
+      contours.delete();
+      hierarchy.delete();
       output.delete();
     }
 
@@ -420,6 +625,68 @@
       return sorted[mid];
     }
 
+    function getHierarchyDepth(index: number, hierarchyData: Int32Array): number {
+      let depth = 0;
+      let parent = hierarchyData[index * 4 + 3];
+      while (parent !== -1) {
+        depth += 1;
+        parent = hierarchyData[parent * 4 + 3];
+      }
+      return depth;
+    }
+
+    function getContourTopRightWithNormal(contour: cv.Mat): { x: number; y: number; n: cv.Vec2 } {
+      const data = contour.data32S;
+      if (!data || data.length < 2) {
+        const rect = cvRef!.boundingRect(contour);
+        return { x: rect.x + rect.width, y: rect.y, n: [1, -1] };
+      }
+      let maxX = data[0];
+      let minYAtMaxX = data[1];
+      let idx = 0;
+      const eps = 1;
+      for (let i = 0; i < data.length; i += 2) {
+        const x = data[i];
+        const y = data[i + 1];
+        if (x > maxX + eps) {
+          maxX = x;
+          minYAtMaxX = y;
+          idx = i;
+        } else if (Math.abs(x - maxX) <= eps && y < minYAtMaxX) {
+          minYAtMaxX = y;
+          idx = i;
+        }
+      }
+      const prev = (idx - 2 + data.length) % data.length;
+      const next = (idx + 2) % data.length;
+      const px = data[prev];
+      const py = data[prev + 1];
+      const nx = data[next];
+      const ny = data[next + 1];
+      const tx = nx - px;
+      const ty = ny - py;
+      let n0 = -ty;
+      let n1 = tx;
+      const len = Math.hypot(n0, n1) || 1;
+      n0 /= len;
+      n1 /= len;
+      return { x: maxX, y: minYAtMaxX, n: [n0, n1] };
+    }
+
+    function getContourCentroid(contour: cv.Mat): cv.Vec2 {
+      const m = cvRef!.moments(contour);
+      if (m.m00 !== 0) {
+        return [m.m10 / m.m00, m.m01 / m.m00];
+      }
+      const rect = cvRef!.boundingRect(contour);
+      return [rect.x + rect.width * 0.5, rect.y + rect.height * 0.5];
+    }
+
+    function clamp(value: number, min: number, max: number): number {
+      return Math.min(max, Math.max(min, value));
+    }
+
+
     function setupGui() {
       const gui = new GUI({ container: guiHost, title: "OpenCV" });
       gui.add(params, "imagePath").name("imagePath").onFinishChange(() => {
@@ -448,6 +715,15 @@
       gui.add(params, "gridMinPoints", 1, 5, 1).name("gridMinPoints").onChange(detectAndDraw);
       gui.add(params, "gridFillMissing").name("gridFillMissing").onChange(detectAndDraw);
       gui.add(params, "gridTargetSpacing", 0, 100, 1).name("gridTargetSpacing").onChange(detectAndDraw);
+      gui.add(params, "showContours").name("showContours").onChange(detectAndDraw);
+      gui.addColor(params, "contourColor").name("contourColor").onChange(detectAndDraw);
+      gui.add(params, "contourThickness", 1, 6, 1).name("contourThickness").onChange(detectAndDraw);
+      gui.add(params, "contourSmooth").name("contourSmooth").onChange(detectAndDraw);
+      gui.add(params, "contourSmoothEpsilonPx", 0.5, 10, 0.5).name("contourSmoothEpsPx").onChange(detectAndDraw);
+      gui.add(params, "showHierarchy").name("showHierarchy").onChange(detectAndDraw);
+      gui.addColor(params, "hierarchyColor").name("hierarchyColor").onChange(detectAndDraw);
+      gui.add(params, "hierarchyFontScale", 0.3, 2, 0.1).name("hierarchyFontScale").onChange(detectAndDraw);
+      gui.add(params, "contourMinAreaPercent", 0, 5, 0.05).name("minArea%").onChange(detectAndDraw);
 
       const copyText = async (text: string) => {
         if (navigator.clipboard && window.isSecureContext) {
