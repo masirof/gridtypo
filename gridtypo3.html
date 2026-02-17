@@ -117,6 +117,10 @@
       gridMinPoints: number;
       gridFillMissing: boolean;
       gridTargetSpacing: number;
+      gridMode: "Boundary" | "Corners";
+      projSmooth: number;
+      projThreshold: number;
+      projMinDistance: number;
       showContours: boolean;
       contourColor: string;
       contourThickness: number;
@@ -160,6 +164,10 @@
       gridMinPoints: 2,
       gridFillMissing: true,
       gridTargetSpacing: 0,
+      gridMode: "Boundary",
+      projSmooth: 5,
+      projThreshold: 0.3,
+      projMinDistance: 6,
       showContours: true,
       contourColor: "#3366ff",
       contourThickness: 2,
@@ -475,29 +483,45 @@
         }
       }
 
-      const cornerXs: number[] = [];
-      const cornerYs: number[] = [];
-      for (let i = 0; i < corners.rows; i += 1) {
-        cornerXs.push(corners.data32F[i * 2]);
-        cornerYs.push(corners.data32F[i * 2 + 1]);
-      }
-
       if (params.showGrid) {
-        const mergedXs = mergeBySpacing(cornerXs, params.gridMinSpacing);
-        const mergedYs = mergeBySpacing(cornerYs, params.gridMinSpacing);
-        const tolerance = Math.max(2, params.gridMinSpacing);
-        const filteredXs = mergedXs.filter(
-          (x) => countPointsNearLine(cornerXs, x, tolerance) >= params.gridMinPoints
-        );
-        const filteredYs = mergedYs.filter(
-          (y) => countPointsNearLine(cornerYs, y, tolerance) >= params.gridMinPoints
-        );
-        const gridXs = params.gridFillMissing
-          ? fillMissingLines(filteredXs, params.gridTargetSpacing)
-          : filteredXs;
-        const gridYs = params.gridFillMissing
-          ? fillMissingLines(filteredYs, params.gridTargetSpacing)
-          : filteredYs;
+        let gridXs: number[] = [];
+        let gridYs: number[] = [];
+        if (params.gridMode === "Corners") {
+          const cornerXs: number[] = [];
+          const cornerYs: number[] = [];
+          for (let i = 0; i < corners.rows; i += 1) {
+            cornerXs.push(corners.data32F[i * 2]);
+            cornerYs.push(corners.data32F[i * 2 + 1]);
+          }
+          const mergedXs = mergeBySpacing(cornerXs, params.gridMinSpacing);
+          const mergedYs = mergeBySpacing(cornerYs, params.gridMinSpacing);
+          const tolerance = Math.max(2, params.gridMinSpacing);
+          const filteredXs = mergedXs.filter(
+            (x) => countPointsNearLine(cornerXs, x, tolerance) >= params.gridMinPoints
+          );
+          const filteredYs = mergedYs.filter(
+            (y) => countPointsNearLine(cornerYs, y, tolerance) >= params.gridMinPoints
+          );
+          gridXs = params.gridFillMissing
+            ? fillMissingLines(filteredXs, params.gridTargetSpacing)
+            : filteredXs;
+          gridYs = params.gridFillMissing
+            ? fillMissingLines(filteredYs, params.gridTargetSpacing)
+            : filteredYs;
+        } else {
+          const projX = projectEdges(edges, true);
+          const projY = projectEdges(edges, false);
+          const smoothX = smooth1d(projX, params.projSmooth);
+          const smoothY = smooth1d(projY, params.projSmooth);
+          const peaksX = findPeaks(smoothX, params.projThreshold, params.projMinDistance);
+          const peaksY = findPeaks(smoothY, params.projThreshold, params.projMinDistance);
+          gridXs = params.gridFillMissing
+            ? fillMissingLines(peaksX, params.gridTargetSpacing)
+            : peaksX;
+          gridYs = params.gridFillMissing
+            ? fillMissingLines(peaksY, params.gridTargetSpacing)
+            : peaksY;
+        }
         const gridColor = hexToScalar(params.gridColor, params.gridAlpha);
         for (const x of gridXs) {
           cvRef.line(
@@ -571,6 +595,86 @@
       }
       merged.push(current);
       return merged;
+    }
+
+    function projectEdges(edgesMat: cv.Mat, sumAlongX: boolean): number[] {
+      const rows = edgesMat.rows;
+      const cols = edgesMat.cols;
+      const data = edgesMat.data;
+      if (sumAlongX) {
+        const proj = new Array(cols).fill(0);
+        for (let y = 0; y < rows; y += 1) {
+          const rowOffset = y * cols;
+          for (let x = 0; x < cols; x += 1) {
+            if (data[rowOffset + x] > 0) {
+              proj[x] += 1;
+            }
+          }
+        }
+        return normalizeArray(proj);
+      }
+      const proj = new Array(rows).fill(0);
+      for (let y = 0; y < rows; y += 1) {
+        const rowOffset = y * cols;
+        let sum = 0;
+        for (let x = 0; x < cols; x += 1) {
+          if (data[rowOffset + x] > 0) {
+            sum += 1;
+          }
+        }
+        proj[y] = sum;
+      }
+      return normalizeArray(proj);
+    }
+
+    function normalizeArray(values: number[]): number[] {
+      let max = 0;
+      for (const v of values) {
+        if (v > max) {
+          max = v;
+        }
+      }
+      if (max === 0) {
+        return values.map(() => 0);
+      }
+      return values.map((v) => v / max);
+    }
+
+    function smooth1d(values: number[], windowSize: number): number[] {
+      if (windowSize <= 1) {
+        return [...values];
+      }
+      const half = Math.floor(windowSize / 2);
+      const smoothed = new Array(values.length).fill(0);
+      for (let i = 0; i < values.length; i += 1) {
+        let acc = 0;
+        let count = 0;
+        for (let k = -half; k <= half; k += 1) {
+          const idx = i + k;
+          if (idx >= 0 && idx < values.length) {
+            acc += values[idx];
+            count += 1;
+          }
+        }
+        smoothed[i] = acc / Math.max(1, count);
+      }
+      return smoothed;
+    }
+
+    function findPeaks(values: number[], threshold: number, minDistance: number): number[] {
+      const peaks: number[] = [];
+      let lastPeak = -Infinity;
+      for (let i = 1; i < values.length - 1; i += 1) {
+        const v = values[i];
+        if (v < threshold) {
+          continue;
+        }
+        if (v >= values[i - 1] && v >= values[i + 1] && i - lastPeak >= minDistance) {
+          peaks.push(i);
+          lastPeak = i;
+        }
+      }
+      return peaks;
     }
 
     function countPointsNearLine(values: number[], line: number, tolerance: number): number {
@@ -689,41 +793,61 @@
 
     function setupGui() {
       const gui = new GUI({ container: guiHost, title: "OpenCV" });
-      gui.add(params, "imagePath").name("imagePath").onFinishChange(() => {
+      const imageFolder = gui.addFolder("Image");
+      imageFolder.add(params, "imagePath").name("imagePath").onFinishChange(() => {
         handleImagePathChange();
       });
-      imageFileController = gui.add(params, "imageFile", imageOptions).name("imageFile").onChange((value: string) => {
-        const folder = getFolderPath(params.imagePath);
-        params.imagePath = joinPath(folder, value);
-        reloadImage();
-      });
-      gui.add(params, "mode", ["Shi-Tomasi", "Harris"]).name("mode").onChange(detectAndDraw);
-      gui.add(params, "maxCorners", 10, 1000, 1).name("maxCorners").onChange(detectAndDraw);
-      gui.add(params, "qualityLevel", 0.001, 0.2, 0.001).name("qualityLevel").onChange(detectAndDraw);
-      gui.add(params, "minDistance", 1, 50, 1).name("minDistance").onChange(detectAndDraw);
-      gui.add(params, "blockSize", 2, 15, 1).name("blockSize").onChange(detectAndDraw);
-      gui.add(params, "k", 0.01, 0.1, 0.005).name("k").onChange(detectAndDraw);
-      gui.add(params, "pointRadius", 1, 10, 1).name("pointRadius").onChange(detectAndDraw);
-      gui.addColor(params, "pointColor").name("pointColor").onChange(detectAndDraw);
-      gui.add(params, "showPoints").name("showPoints").onChange(detectAndDraw);
-      gui.add(params, "showSource").name("showSource").onChange(detectAndDraw);
-      gui.add(params, "showGrid").name("showGrid").onChange(detectAndDraw);
-      gui.addColor(params, "gridColor").name("gridColor").onChange(detectAndDraw);
-      gui.add(params, "gridThickness", 1, 6, 1).name("gridThickness").onChange(detectAndDraw);
-      gui.add(params, "gridAlpha", 0.1, 1, 0.05).name("gridAlpha").onChange(detectAndDraw);
-      gui.add(params, "gridMinSpacing", 1, 30, 1).name("gridMinSpacing").onChange(detectAndDraw);
-      gui.add(params, "gridMinPoints", 1, 5, 1).name("gridMinPoints").onChange(detectAndDraw);
-      gui.add(params, "gridFillMissing").name("gridFillMissing").onChange(detectAndDraw);
-      gui.add(params, "gridTargetSpacing", 0, 100, 1).name("gridTargetSpacing").onChange(detectAndDraw);
-      gui.add(params, "showContours").name("showContours").onChange(detectAndDraw);
-      gui.addColor(params, "contourColor").name("contourColor").onChange(detectAndDraw);
-      gui.add(params, "contourThickness", 1, 6, 1).name("contourThickness").onChange(detectAndDraw);
-      gui.add(params, "contourSmooth").name("contourSmooth").onChange(detectAndDraw);
-      gui.add(params, "contourSmoothEpsilonPx", 0.5, 10, 0.5).name("contourSmoothEpsPx").onChange(detectAndDraw);
-      gui.add(params, "showHierarchy").name("showHierarchy").onChange(detectAndDraw);
-      gui.addColor(params, "hierarchyColor").name("hierarchyColor").onChange(detectAndDraw);
-      gui.add(params, "hierarchyFontScale", 0.3, 2, 0.1).name("hierarchyFontScale").onChange(detectAndDraw);
-      gui.add(params, "contourMinAreaPercent", 0, 5, 0.05).name("minArea%").onChange(detectAndDraw);
+      imageFileController = imageFolder
+        .add(params, "imageFile", imageOptions)
+        .name("imageFile")
+        .onChange((value: string) => {
+          const folder = getFolderPath(params.imagePath);
+          params.imagePath = joinPath(folder, value);
+          reloadImage();
+        });
+
+      const cornersFolder = gui.addFolder("Corners");
+      cornersFolder.add(params, "mode", ["Shi-Tomasi", "Harris"]).name("mode").onChange(detectAndDraw);
+      cornersFolder.add(params, "maxCorners", 10, 1000, 1).name("maxCorners").onChange(detectAndDraw);
+      cornersFolder.add(params, "qualityLevel", 0.001, 0.2, 0.001).name("qualityLevel").onChange(detectAndDraw);
+      cornersFolder.add(params, "minDistance", 1, 50, 1).name("minDistance").onChange(detectAndDraw);
+      cornersFolder.add(params, "blockSize", 2, 15, 1).name("blockSize").onChange(detectAndDraw);
+      cornersFolder.add(params, "k", 0.01, 0.1, 0.005).name("k").onChange(detectAndDraw);
+      cornersFolder.add(params, "pointRadius", 1, 10, 1).name("pointRadius").onChange(detectAndDraw);
+      cornersFolder.addColor(params, "pointColor").name("pointColor").onChange(detectAndDraw);
+      cornersFolder.add(params, "showPoints").name("showPoints").onChange(detectAndDraw);
+
+      const gridFolder = gui.addFolder("Grid");
+      gridFolder.add(params, "showGrid").name("showGrid").onChange(detectAndDraw);
+      gridFolder.add(params, "gridMode", ["Boundary", "Corners"]).name("gridMode").onChange(detectAndDraw);
+      gridFolder.addColor(params, "gridColor").name("gridColor").onChange(detectAndDraw);
+      gridFolder.add(params, "gridThickness", 1, 6, 1).name("gridThickness").onChange(detectAndDraw);
+      gridFolder.add(params, "gridAlpha", 0.1, 1, 0.05).name("gridAlpha").onChange(detectAndDraw);
+      gridFolder.add(params, "gridMinSpacing", 1, 30, 1).name("gridMinSpacing").onChange(detectAndDraw);
+      gridFolder.add(params, "gridMinPoints", 1, 5, 1).name("gridMinPoints").onChange(detectAndDraw);
+      gridFolder.add(params, "gridFillMissing").name("gridFillMissing").onChange(detectAndDraw);
+      gridFolder.add(params, "gridTargetSpacing", 0, 100, 1).name("gridTargetSpacing").onChange(detectAndDraw);
+
+      const projFolder = gui.addFolder("Projection");
+      projFolder.add(params, "projSmooth", 1, 21, 2).name("projSmooth").onChange(detectAndDraw);
+      projFolder.add(params, "projThreshold", 0.05, 0.9, 0.05).name("projThreshold").onChange(detectAndDraw);
+      projFolder.add(params, "projMinDistance", 1, 30, 1).name("projMinDistance").onChange(detectAndDraw);
+
+      const contourFolder = gui.addFolder("Contours");
+      contourFolder.add(params, "showContours").name("showContours").onChange(detectAndDraw);
+      contourFolder.addColor(params, "contourColor").name("contourColor").onChange(detectAndDraw);
+      contourFolder.add(params, "contourThickness", 1, 6, 1).name("contourThickness").onChange(detectAndDraw);
+      contourFolder.add(params, "contourSmooth").name("contourSmooth").onChange(detectAndDraw);
+      contourFolder.add(params, "contourSmoothEpsilonPx", 0.5, 10, 0.5).name("contourSmoothEpsPx").onChange(detectAndDraw);
+      contourFolder.add(params, "contourMinAreaPercent", 0, 5, 0.05).name("minArea%").onChange(detectAndDraw);
+
+      const hierarchyFolder = gui.addFolder("Hierarchy");
+      hierarchyFolder.add(params, "showHierarchy").name("showHierarchy").onChange(detectAndDraw);
+      hierarchyFolder.addColor(params, "hierarchyColor").name("hierarchyColor").onChange(detectAndDraw);
+      hierarchyFolder.add(params, "hierarchyFontScale", 0.3, 2, 0.1).name("hierarchyFontScale").onChange(detectAndDraw);
+
+      const viewFolder = gui.addFolder("View");
+      viewFolder.add(params, "showSource").name("showSource").onChange(detectAndDraw);
 
       const copyText = async (text: string) => {
         if (navigator.clipboard && window.isSecureContext) {
