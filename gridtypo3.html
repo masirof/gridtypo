@@ -917,6 +917,31 @@
       return Math.min(max, Math.max(min, value));
     }
 
+    let pendingDraw = false;
+    function scheduleDraw() {
+      if (pendingDraw) {
+        return;
+      }
+      pendingDraw = true;
+      requestAnimationFrame(() => {
+        pendingDraw = false;
+        detectAndDraw();
+      });
+    }
+
+    function linkControllers(controllers: GUIController[]) {
+      controllers.forEach((controller) => {
+        controller.onChange(() => {
+          controllers.forEach((other) => {
+            if (other !== controller) {
+              other.updateDisplay();
+            }
+          });
+          scheduleDraw();
+        });
+      });
+    }
+
 
     function setupGui() {
       const gui = new GUI({ container: guiHost, title: "OpenCV" });
@@ -932,6 +957,24 @@
           params.imagePath = joinPath(folder, value);
           reloadImage();
         });
+      const quickFolder = imageFolder.addFolder("よく使う");
+      const quickProjSmooth = quickFolder
+        .add(params, "projSmooth", 1, 21, 2)
+        .name("projSmooth")
+        .onChange(scheduleDraw);
+      const quickProjK = quickFolder.add(params, "projK", 0.2, 2.5, 0.1).name("projK").onChange(scheduleDraw);
+      const quickProjMin = quickFolder
+        .add(params, "projMinDistance", 1, 30, 1)
+        .name("projMinDistance")
+        .onChange(scheduleDraw);
+      const quickGridFill = quickFolder
+        .add(params, "gridFillMissing")
+        .name("gridFillMissing")
+        .onChange(scheduleDraw);
+      const quickGridHit = quickFolder
+        .add(params, "gridRequireBoundaryHit")
+        .name("gridRequireBoundaryHit")
+        .onChange(scheduleDraw);
 
       const cornersFolder = gui.addFolder("Corners");
       cornersFolder.add(params, "mode", ["Shi-Tomasi", "Harris"]).name("mode").onChange(detectAndDraw);
@@ -948,20 +991,26 @@
       gridFolder.add(params, "showGrid").name("showGrid").onChange(detectAndDraw);
       gridFolder.add(params, "gridMode", ["Boundary", "Corners"]).name("gridMode").onChange(detectAndDraw);
       gridFolder.add(params, "gridClipToBoundary").name("gridClipToBoundary").onChange(detectAndDraw);
-      gridFolder.add(params, "gridRequireBoundaryHit").name("gridRequireBoundaryHit").onChange(detectAndDraw);
+      const gridHit = gridFolder
+        .add(params, "gridRequireBoundaryHit")
+        .name("gridRequireBoundaryHit")
+        .onChange(detectAndDraw);
       gridFolder.add(params, "gridHitMargin", 0, 10, 1).name("gridHitMargin").onChange(detectAndDraw);
       gridFolder.addColor(params, "gridColor").name("gridColor").onChange(detectAndDraw);
       gridFolder.add(params, "gridThickness", 1, 6, 1).name("gridThickness").onChange(detectAndDraw);
       gridFolder.add(params, "gridAlpha", 0.1, 1, 0.05).name("gridAlpha").onChange(detectAndDraw);
       gridFolder.add(params, "gridMinSpacing", 1, 30, 1).name("gridMinSpacing").onChange(detectAndDraw);
       gridFolder.add(params, "gridMinPoints", 1, 5, 1).name("gridMinPoints").onChange(detectAndDraw);
-      gridFolder.add(params, "gridFillMissing").name("gridFillMissing").onChange(detectAndDraw);
+      const gridFill = gridFolder.add(params, "gridFillMissing").name("gridFillMissing").onChange(detectAndDraw);
       gridFolder.add(params, "gridTargetSpacing", 0, 100, 1).name("gridTargetSpacing").onChange(detectAndDraw);
 
       const projFolder = gui.addFolder("Projection");
-      projFolder.add(params, "projSmooth", 1, 21, 2).name("projSmooth").onChange(detectAndDraw);
-      projFolder.add(params, "projK", 0.2, 2.5, 0.1).name("projK").onChange(detectAndDraw);
-      projFolder.add(params, "projMinDistance", 1, 30, 1).name("projMinDistance").onChange(detectAndDraw);
+      const projSmooth = projFolder.add(params, "projSmooth", 1, 21, 2).name("projSmooth").onChange(detectAndDraw);
+      const projK = projFolder.add(params, "projK", 0.2, 2.5, 0.1).name("projK").onChange(detectAndDraw);
+      const projMin = projFolder
+        .add(params, "projMinDistance", 1, 30, 1)
+        .name("projMinDistance")
+        .onChange(detectAndDraw);
 
       const contourFolder = gui.addFolder("Contours");
       contourFolder.add(params, "showContours").name("showContours").onChange(detectAndDraw);
@@ -978,6 +1027,12 @@
 
       const viewFolder = gui.addFolder("View");
       viewFolder.add(params, "showSource").name("showSource").onChange(detectAndDraw);
+
+      linkControllers([projSmooth, quickProjSmooth]);
+      linkControllers([projK, quickProjK]);
+      linkControllers([projMin, quickProjMin]);
+      linkControllers([gridFill, quickGridFill]);
+      linkControllers([gridHit, quickGridHit]);
 
       const copyText = async (text: string) => {
         if (navigator.clipboard && window.isSecureContext) {

@@ -9,11 +9,10 @@ localStorage に保存
 
 ## todo
 - [x] gridを境界線の外に書かないようにする→チェックボックス化
-- [ ] グループ化を並び替える
 - [ ] グループを閉じた開いたを保存するやつ
 - [ ] a2, z1 文字のノイズ除去を維持したまま、細いラインにも対応したい
   - counters minArea%
-- [ ] よく使う項目guiを上部に持ってくる
+- [x] よく使う項目guiを上部に持ってくる
 - [ ] gridrequireboundaryhit nasa なんか当たってんのに消えとる
 
 ## AIプロンプト
@@ -57,7 +56,8 @@ localStorage に保存
   - projectionグループの3要素
   - gridfillmissing
   - gridRequireBoundaryHit
-  - 複製した要素は複製前と値が同期するようにして
+  - 同じ設定項目が複数個ある場合は値が同期するようにして←もっさりしているので高速化してくれあ
+  - スライダーにできるものはスライダーにして
 
 
 # threshold
