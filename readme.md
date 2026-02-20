@@ -34,6 +34,8 @@ localStorage に保存
 - 画像の読み込みをjpgだけではなく、.pngに対応してほしい
 - 画像の名前をtest_P1.jpgとかからP1.jpgにしたが、画像の読み込みができていないっぽいので修正
 
+- う～んsmoothとthreshold2つのパラメータをいじるのがめんどいので、一つのパラメータでいい感じにしたい
+
 # threshold
 - projThresholdの調節
 - A1 0.1
