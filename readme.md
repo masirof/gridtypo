@@ -7,6 +7,15 @@
 localStorage に保存
 キーは gridtypo1-lilgui
 
+## todo
+- [x] gridを境界線の外に書かないようにする→チェックボックス化
+- [ ] グループ化を並び替える
+- [ ] グループを閉じた開いたを保存するやつ
+- [ ] a2, z1 文字のノイズ除去を維持したまま、細いラインにも対応したい
+  - counters minArea%
+- [ ] よく使う項目guiを上部に持ってくる
+- [ ] gridrequireboundaryhit nasa なんか当たってんのに消えとる
+
 ## AIプロンプト
 - gridtypo1.htmlに /images/test_S1.jpgを読み込んで、opencv使ってコーナー検出して
 - lil-guiでopencvのパラメータをスライダーで調節できるようにして、lil-guiのパラメータ保存と、モード切替を使って
@@ -35,6 +44,21 @@ localStorage に保存
 - 画像の名前をtest_P1.jpgとかからP1.jpgにしたが、画像の読み込みができていないっぽいので修正
 
 - う～んsmoothとthreshold2つのパラメータをいじるのがめんどいので、一つのパラメータでいい感じにしたい
+
+- gridを境界線に少しでも当たっていない線は、描かないようにする
+- 少しでも当たった線は画像の端から端まで伸ばして良い
+- 色は変わらんようにして
+- 当たり判定の余白長さのしきい値を調整できるように
+- チェックボックス化
+
+- showgridをすると、画像の色が消えるので修正してくれや
+
+- グループimagsの下にグループよく使うを追加し、下要素を複製して移動しておいて
+  - projectionグループの3要素
+  - gridfillmissing
+  - gridRequireBoundaryHit
+  - 複製した要素は複製前と値が同期するようにして
+
 
 # threshold
 - projThresholdの調節
@@ -68,16 +92,75 @@ opencv.js のロード完了だけでは使える状態にならず、Module.onR
 
 ## opencv設定
 {
-  "controllers": {
-    "mode": "Shi-Tomasi",
-    "maxCorners": 150,
-    "qualityLevel": 0.05,
-    "minDistance": 10,
-    "blockSize": 2,
-    "k": 0.02,
-    "pointRadius": 5,
-    "pointColor": "#00ff66",
-    "showSource": true
-  },
-  "folders": {}
+  "controllers": {},
+  "folders": {
+    "Image": {
+      "controllers": {
+        "imagePath": "images/z1.jpg",
+        "imageFile": "z1.jpg"
+      },
+      "folders": {}
+    },
+    "Corners": {
+      "controllers": {
+        "mode": "Shi-Tomasi",
+        "maxCorners": 150,
+        "qualityLevel": 0.05,
+        "minDistance": 10,
+        "blockSize": 2,
+        "k": 0.02,
+        "pointRadius": 5,
+        "pointColor": "#ff0000",
+        "showPoints": true
+      },
+      "folders": {}
+    },
+    "Grid": {
+      "controllers": {
+        "showGrid": true,
+        "gridMode": "Boundary",
+        "gridColor": "#44ff00",
+        "gridThickness": 2,
+        "gridAlpha": 1,
+        "gridMinSpacing": 10,
+        "gridMinPoints": 2,
+        "gridFillMissing": true,
+        "gridTargetSpacing": 0
+      },
+      "folders": {}
+    },
+    "Projection": {
+      "controllers": {
+        "projSmooth": 1,
+        "projK": 2.1,
+        "projMinDistance": 20
+      },
+      "folders": {}
+    },
+    "Contours": {
+      "controllers": {
+        "showContours": true,
+        "contourColor": "#3366ff",
+        "contourThickness": 2,
+        "contourSmooth": true,
+        "contourSmoothEpsPx": 1,
+        "minArea%": 1
+      },
+      "folders": {}
+    },
+    "Hierarchy": {
+      "controllers": {
+        "showHierarchy": true,
+        "hierarchyColor": "#6670ff",
+        "hierarchyFontScale": 1
+      },
+      "folders": {}
+    },
+    "View": {
+      "controllers": {
+        "showSource": true
+      },
+      "folders": {}
+    }
+  }
 }
