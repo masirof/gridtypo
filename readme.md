@@ -31,6 +31,36 @@ localStorage に保存
 
 - lilgui グループ化して分けてみて
 
+- 画像の読み込みをjpgだけではなく、.pngに対応してほしい
+- 画像の名前をtest_P1.jpgとかからP1.jpgにしたが、画像の読み込みができていないっぽいので修正
+
+# threshold
+- projThresholdの調節
+- A1 0.1
+- A2 0.05
+- P1 0.05
+- S1 0.05
+- nasa 0.05
+- z1 
+  - smooth 2
+  - threshold 0.15
+  - smooth 1
+  - threshold 0.35
+
+- smoothを下げた(10より1)ほうが滑らかじゃないので、直線的なんで検知しやすい？
+
+- smooth を上げる(10)→投影波形の尖りが減る
+ピークの山が広くなって、相対的に 高さが下がる
+その結果、同じ threshold だと 拾える範囲が狭くなる
+→ なので 閾値を下げる必要が出る
+smooth を下げる
+
+形が鋭くなる
+ピークの高さが上がる
+→ 閾値は 少し高めでも拾える
+つまり
+smooth↑ → thresholdは↓にしないと同じ量が拾えない
+
 ## トラシュ
 opencv.js のロード完了だけでは使える状態にならず、Module.onRuntimeInitialized を待つ必要がある
 

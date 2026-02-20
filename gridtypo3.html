@@ -144,8 +144,8 @@
     const OPENCV_EMBEDDED_WASM = true;
 
     const params: AppParams = {
-      imagePath: "images/test_z1.jpg",
-      imageFile: "test_z1.jpg",
+      imagePath: "images/z1.jpg",
+      imageFile: "z1.jpg",
       mode: "Shi-Tomasi",
       maxCorners: 150,
       qualityLevel: 0.05,
@@ -184,7 +184,7 @@
     let sourceImg: HTMLImageElement | null = null;
     let isCvReady = false;
     let cvRef: typeof cv | null = null;
-    let imageOptions = ["test_z1.jpg", "test_P1.jpg", "test_S1.jpg"];
+    let imageOptions = ["z1.jpg", "P1.jpg", "S1.jpg", "A1.jpg", "nasa.png"];
     let imageFileController: GUIController<string> | null = null;
 
     function setStatus(text: string) {
