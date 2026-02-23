@@ -114,9 +114,12 @@
       dotRadius: 4,
       dotColor: "#ffffff",
       padding: 60,
+      fillColor: "#e8481e",
+      fillSize: 1,
     };
 
     const STORAGE_KEY = "hand-gridtypo1-lilgui";
+    const filledSquares = new Set();
 
     function log(message) {
       const time = new Date().toISOString().slice(11, 19);
@@ -131,15 +134,15 @@
     function resizeCanvas() {
       const rect = canvas.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
-      canvas.width = Math.max(1, Math.floor(rect.width * dpr));
-      canvas.height = Math.max(1, Math.floor(rect.width * 0.75 * dpr));
+      const size = Math.max(1, Math.floor(rect.width * dpr));
+      canvas.width = size;
+      canvas.height = size;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
-
-    function drawGrid() {
+function drawGrid() {
       resizeCanvas();
       const width = canvas.getBoundingClientRect().width;
-      const height = canvas.getBoundingClientRect().width * 0.75;
+      const height = canvas.getBoundingClientRect().width;
       ctx.clearRect(0, 0, width, height);
 
       const cols = Math.max(1, Math.floor(params.cols));
@@ -147,6 +150,36 @@
       const pad = Math.max(0, params.padding);
       const innerW = Math.max(1, width - pad * 2);
       const innerH = Math.max(1, height - pad * 2);
+
+      const cellW = cols === 1 ? innerW : innerW / (cols - 1);
+      const cellH = rows === 1 ? innerH : innerH / (rows - 1);
+
+      ctx.fillStyle = params.fillColor;
+      for (const key of filledSquares) {
+        const [cx, cy] = key.split(",").map((v) => Number(v));
+        if (Number.isNaN(cx) || Number.isNaN(cy)) {
+          continue;
+        }
+        const x0 = pad + cellW * cx;
+        const y0 = pad + cellH * cy;
+        const x1 = pad + cellW * (cx + 1);
+        const y1 = pad + cellH * (cy + 1);
+        const fullW = x1 - x0;
+        const fullH = y1 - y0;
+        const fillW = fullW * params.fillSize;
+        const fillH = fullH * params.fillSize;
+        if (params.fillSize >= 0.999) {
+          const left = Math.floor(x0);
+          const top = Math.floor(y0);
+          const right = Math.ceil(x1);
+          const bottom = Math.ceil(y1);
+          ctx.fillRect(left, top, right - left, bottom - top);
+        } else {
+          const px = x0 + (fullW - fillW) / 2;
+          const py = y0 + (fullH - fillH) / 2;
+          ctx.fillRect(px, py, fillW, fillH);
+        }
+      }
 
       ctx.fillStyle = params.dotColor;
       for (let y = 0; y < rows; y += 1) {
@@ -168,6 +201,8 @@
     gui.add(params, "dotRadius", 1, 10, 1).name("dotRadius").onChange(drawGrid);
     gui.addColor(params, "dotColor").name("dotColor").onChange(drawGrid);
     gui.add(params, "padding", 0, 80, 1).name("padding").onChange(drawGrid);
+    gui.addColor(params, "fillColor").name("fillColor").onChange(drawGrid);
+    gui.add(params, "fillSize", 0.2, 1, 0.05).name("fillSize").onChange(drawGrid);
 
     const copyText = async (text) => {
       if (navigator.clipboard && window.isSecureContext) {
@@ -218,6 +253,117 @@
     gui.add(io, "reset").name("reset");
     gui.add(io, "copy").name("copy preset");
 
+    function cellFromPoint(x, y) {
+      const width = canvas.getBoundingClientRect().width;
+      const height = canvas.getBoundingClientRect().width;
+      const cols = Math.max(1, Math.floor(params.cols));
+      const rows = Math.max(1, Math.floor(params.rows));
+      const pad = Math.max(0, params.padding);
+      const innerW = Math.max(1, width - pad * 2);
+      const innerH = Math.max(1, height - pad * 2);
+      if (x < pad || y < pad || x > pad + innerW || y > pad + innerH) {
+        return null;
+      }
+      const cellW = cols === 1 ? innerW : innerW / (cols - 1);
+      const cellH = rows === 1 ? innerH : innerH / (rows - 1);
+      const maxX = Math.max(0, cols - 2);
+      const maxY = Math.max(0, rows - 2);
+      const cx = Math.min(maxX, Math.max(0, Math.floor((x - pad) / cellW)));
+      const cy = Math.min(maxY, Math.max(0, Math.floor((y - pad) / cellH)));
+      return { cx, cy };
+    }
+
+    function keyFromPoint(x, y) {
+      const cell = cellFromPoint(x, y);
+      if (!cell) {
+        return null;
+      }
+      return `${cell.cx},${cell.cy}`;
+    }
+
+    function setSquareAt(x, y, filled) {
+      const key = keyFromPoint(x, y);
+      if (!key) {
+        return false;
+      }
+      const has = filledSquares.has(key);
+      if (filled) {
+        if (!has) {
+          filledSquares.add(key);
+          return true;
+        }
+        return false;
+      }
+      if (filledSquares.has(key)) {
+        filledSquares.delete(key);
+        return true;
+      } else {
+        filledSquares.add(key);
+        return true;
+      }
+    }
+
+    function toggleSquareAt(x, y) {
+      if (setSquareAt(x, y, null)) {
+        drawGrid();
+      }
+    }
+
+    let isPainting = false;
+    let paintValue = true;
+
+    canvas.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+    });
+
+    canvas.addEventListener("pointerdown", (event) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      if (event.button === 0) {
+        const key = keyFromPoint(x, y);
+        if (!key) {
+          return;
+        }
+        isPainting = true;
+        paintValue = !filledSquares.has(key);
+        canvas.setPointerCapture(event.pointerId);
+        if (setSquareAt(x, y, paintValue)) {
+          drawGrid();
+        }
+      } else if (event.button === 2) {
+        isPainting = true;
+        paintValue = false;
+        canvas.setPointerCapture(event.pointerId);
+        if (setSquareAt(x, y, paintValue)) {
+          drawGrid();
+        }
+      }
+    });
+
+    canvas.addEventListener("pointermove", (event) => {
+      if (!isPainting) {
+        return;
+      }
+      const rect = canvas.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      if (setSquareAt(x, y, paintValue)) {
+        drawGrid();
+      }
+    });
+
+    canvas.addEventListener("pointerup", (event) => {
+      if (isPainting) {
+        isPainting = false;
+        canvas.releasePointerCapture(event.pointerId);
+      }
+    });
+
+    canvas.addEventListener("pointercancel", () => {
+      isPainting = false;
+    });
+
     window.addEventListener("resize", drawGrid);
 
     setStatus("Ready");
@@ -225,3 +371,4 @@
   </script>
 </body>
 </html>
+
