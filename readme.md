@@ -1,4 +1,50 @@
-# 構成
+# 全体
+- グリッド解析ツール
+- 手動で文字作るツール
+- 自動で文字作るツール
+
+
+# 手動で文字作るツール
+## 仕様
+- n*nのグリッドで構成
+  - n*nのグリッド数を調節できる
+- モデル
+  - grid
+  - 
+- 1.四角いグリッドを塗りつぶす
+- 2.線を調整する
+  - グリッドの交点(ドット)を2点のドット間の線をグリグリ移動できる
+- cadぽく線幅やR値を調節できる
+
+- 名前何がいいだろう
+  - grid dot line shape vector
+  - dotlinegridtypo
+  - gridmoji
+  - かぶりにくくて覚えやすくてシンプルでスペルがわかりやすくてかぶりにくいように8文字ぐらいで独自性がある言葉
+  - ゼクサとかヴィとかわかりにくい
+  - hand_gridtypo
+
+## AIプロンプト
+- hand_gridtypo1.htmlを編集して
+- scan_gridtypo3.htmlを参考にして右端のlilguiと下のdebugviewを追加して
+- 左上にはグリッドの編集viewを表示
+- lilguiにn(縦)とn(横)のスライドバー追加して、グリッド数を制御したい
+- グリッドの表示はドットのみ
+
+- 下記機能をscan_gridtypo3.htmlを参考にして追加
+  - save preset
+  - load preset
+  - reset
+  - copy preset
+
+## 色
+各stage(window)ごとの背景色を一番うしろの背景と同じ色にして
+一番うしろの背景: 202020
+境界線: 5e5e5e
+9f9f9f
+
+# グリッド解析ツール
+## 構成
 - opencv
 - canvas
 - lil-gui

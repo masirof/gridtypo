@@ -1,0 +1,202 @@
+﻿<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>hand_gridtypo1</title>
+  <style>
+    :root {
+      color-scheme: light;
+    }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", system-ui, sans-serif;
+      background: #f6f4f0;
+      color: #1b1b1b;
+    }
+    .wrap {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+      padding: 16px;
+    }
+    .main {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+    .stage {
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      padding: 12px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+    }
+    canvas {
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 8px;
+      background: #101010;
+    }
+    .status {
+      font-size: 14px;
+      opacity: 0.8;
+      margin-bottom: 8px;
+    }
+    pre {
+      margin: 0;
+      font-size: 12px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+    }
+    @media (min-width: 960px) {
+      .main {
+        grid-template-columns: 1.2fr 0.8fr;
+        align-items: start;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="main">
+      <div class="stage">
+        <div class="status" id="status">Grid Editor</div>
+        <canvas id="grid"></canvas>
+      </div>
+      <div class="stage">
+        <div id="gui"></div>
+      </div>
+    </div>
+    <div class="stage">
+      <pre id="debug"></pre>
+    </div>
+  </div>
+
+  <script type="module">
+    import GUI from "https://cdn.jsdelivr.net/npm/lil-gui@0.19/+esm";
+
+    const canvas = document.getElementById("grid");
+    const statusEl = document.getElementById("status");
+    const debugEl = document.getElementById("debug");
+    const guiHost = document.getElementById("gui");
+    const ctx = canvas.getContext("2d");
+
+    const params = {
+      cols: 4,
+      rows: 4,
+      dotRadius: 4,
+      dotColor: "#ffffff",
+      padding: 60,
+    };
+
+    const STORAGE_KEY = "hand-gridtypo1-lilgui";
+
+    function log(message) {
+      const time = new Date().toISOString().slice(11, 19);
+      debugEl.textContent = `[${time}] ${message}\n` + debugEl.textContent;
+    }
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+      log(text);
+    }
+
+    function resizeCanvas() {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.max(1, Math.floor(rect.width * dpr));
+      canvas.height = Math.max(1, Math.floor(rect.width * 0.75 * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function drawGrid() {
+      resizeCanvas();
+      const width = canvas.getBoundingClientRect().width;
+      const height = canvas.getBoundingClientRect().width * 0.75;
+      ctx.clearRect(0, 0, width, height);
+
+      const cols = Math.max(1, Math.floor(params.cols));
+      const rows = Math.max(1, Math.floor(params.rows));
+      const pad = Math.max(0, params.padding);
+      const innerW = Math.max(1, width - pad * 2);
+      const innerH = Math.max(1, height - pad * 2);
+
+      ctx.fillStyle = params.dotColor;
+      for (let y = 0; y < rows; y += 1) {
+        const ty = rows === 1 ? 0.5 : y / (rows - 1);
+        const py = pad + innerH * ty;
+        for (let x = 0; x < cols; x += 1) {
+          const tx = cols === 1 ? 0.5 : x / (cols - 1);
+          const px = pad + innerW * tx;
+          ctx.beginPath();
+          ctx.arc(px, py, params.dotRadius, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+
+    const gui = new GUI({ container: guiHost, title: "Grid" });
+    gui.add(params, "cols", 1, 50, 1).name("n(横)").onChange(drawGrid);
+    gui.add(params, "rows", 1, 50, 1).name("n(縦)").onChange(drawGrid);
+    gui.add(params, "dotRadius", 1, 10, 1).name("dotRadius").onChange(drawGrid);
+    gui.addColor(params, "dotColor").name("dotColor").onChange(drawGrid);
+    gui.add(params, "padding", 0, 80, 1).name("padding").onChange(drawGrid);
+
+    const copyText = async (text) => {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    };
+
+    const io = {
+      save: () => {
+        const data = gui.save();
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        setStatus("Preset saved");
+      },
+      load: () => {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        if (!saved) {
+          setStatus("No preset saved");
+          return;
+        }
+        gui.load(JSON.parse(saved));
+        drawGrid();
+        setStatus("Preset loaded");
+      },
+      reset: () => {
+        gui.reset();
+        drawGrid();
+        setStatus("Preset reset");
+      },
+      copy: async () => {
+        const data = gui.save();
+        await copyText(JSON.stringify(data, null, 2));
+        setStatus("Preset copied");
+      },
+    };
+
+    gui.add(io, "save").name("save preset");
+    gui.add(io, "load").name("load preset");
+    gui.add(io, "reset").name("reset");
+    gui.add(io, "copy").name("copy preset");
+
+    window.addEventListener("resize", drawGrid);
+
+    setStatus("Ready");
+    drawGrid();
+  </script>
+</body>
+</html>
