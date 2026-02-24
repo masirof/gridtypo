@@ -281,8 +281,7 @@ function drawGrid() {
       return `${cell.cx},${cell.cy}`;
     }
 
-    function setSquareAt(x, y, filled) {
-      const key = keyFromPoint(x, y);
+    function setSquareByKey(key, filled) {
       if (!key) {
         return false;
       }
@@ -303,6 +302,11 @@ function drawGrid() {
       }
     }
 
+    function setSquareAt(x, y, filled) {
+      const key = keyFromPoint(x, y);
+      return setSquareByKey(key, filled);
+    }
+
     function toggleSquareAt(x, y) {
       if (setSquareAt(x, y, null)) {
         drawGrid();
@@ -311,6 +315,7 @@ function drawGrid() {
 
     let isPainting = false;
     let paintValue = true;
+    let lastPaintKey = null;
 
     canvas.addEventListener("contextmenu", (event) => {
       event.preventDefault();
@@ -326,14 +331,16 @@ function drawGrid() {
           return;
         }
         isPainting = true;
-        paintValue = !filledSquares.has(key);
+        paintValue = false;
+        lastPaintKey = key;
         canvas.setPointerCapture(event.pointerId);
-        if (setSquareAt(x, y, paintValue)) {
+        if (setSquareByKey(key, paintValue)) {
           drawGrid();
         }
       } else if (event.button === 2) {
         isPainting = true;
-        paintValue = false;
+        paintValue = true;
+        lastPaintKey = null;
         canvas.setPointerCapture(event.pointerId);
         if (setSquareAt(x, y, paintValue)) {
           drawGrid();
@@ -348,7 +355,12 @@ function drawGrid() {
       const rect = canvas.getBoundingClientRect();
       const x = event.clientX - rect.left;
       const y = event.clientY - rect.top;
-      if (setSquareAt(x, y, paintValue)) {
+      const key = keyFromPoint(x, y);
+      if (!key || key === lastPaintKey) {
+        return;
+      }
+      lastPaintKey = key;
+      if (setSquareByKey(key, paintValue)) {
         drawGrid();
       }
     });
@@ -356,12 +368,14 @@ function drawGrid() {
     canvas.addEventListener("pointerup", (event) => {
       if (isPainting) {
         isPainting = false;
+        lastPaintKey = null;
         canvas.releasePointerCapture(event.pointerId);
       }
     });
 
     canvas.addEventListener("pointercancel", () => {
       isPainting = false;
+      lastPaintKey = null;
     });
 
     window.addEventListener("resize", drawGrid);
