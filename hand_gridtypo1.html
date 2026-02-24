@@ -109,13 +109,15 @@
     const ctx = canvas.getContext("2d");
 
     const params = {
-      cols: 4,
-      rows: 4,
+      cols: 5,
+      rows: 5,
       dotRadius: 4,
       dotColor: "#ffffff",
       padding: 60,
       fillColor: "#e8481e",
       fillSize: 1,
+      edgeColor: "#9f9f9f",
+      edgeThickness: 6,
     };
 
     const STORAGE_KEY = "hand-gridtypo1-lilgui";
@@ -181,6 +183,48 @@ function drawGrid() {
         }
       }
 
+      ctx.strokeStyle = params.edgeColor;
+      ctx.lineWidth = params.edgeThickness;
+      ctx.lineCap = "square";
+      for (const key of filledSquares) {
+        const [cx, cy] = key.split(",").map((v) => Number(v));
+        if (Number.isNaN(cx) || Number.isNaN(cy)) {
+          continue;
+        }
+        const x0 = pad + cellW * cx;
+        const y0 = pad + cellH * cy;
+        const x1 = pad + cellW * (cx + 1);
+        const y1 = pad + cellH * (cy + 1);
+        const leftKey = `${cx - 1},${cy}`;
+        const rightKey = `${cx + 1},${cy}`;
+        const upKey = `${cx},${cy - 1}`;
+        const downKey = `${cx},${cy + 1}`;
+        if (cx === 0 || !filledSquares.has(leftKey)) {
+          ctx.beginPath();
+          ctx.moveTo(x0, y0);
+          ctx.lineTo(x0, y1);
+          ctx.stroke();
+        }
+        if (cx === cols - 2 || !filledSquares.has(rightKey)) {
+          ctx.beginPath();
+          ctx.moveTo(x1, y0);
+          ctx.lineTo(x1, y1);
+          ctx.stroke();
+        }
+        if (cy === 0 || !filledSquares.has(upKey)) {
+          ctx.beginPath();
+          ctx.moveTo(x0, y0);
+          ctx.lineTo(x1, y0);
+          ctx.stroke();
+        }
+        if (cy === rows - 2 || !filledSquares.has(downKey)) {
+          ctx.beginPath();
+          ctx.moveTo(x0, y1);
+          ctx.lineTo(x1, y1);
+          ctx.stroke();
+        }
+      }
+
       ctx.fillStyle = params.dotColor;
       for (let y = 0; y < rows; y += 1) {
         const ty = rows === 1 ? 0.5 : y / (rows - 1);
@@ -203,6 +247,8 @@ function drawGrid() {
     gui.add(params, "padding", 0, 80, 1).name("padding").onChange(drawGrid);
     gui.addColor(params, "fillColor").name("fillColor").onChange(drawGrid);
     gui.add(params, "fillSize", 0.2, 1, 0.05).name("fillSize").onChange(drawGrid);
+    gui.addColor(params, "edgeColor").name("edgeColor").onChange(drawGrid);
+    gui.add(params, "edgeThickness", 1, 10, 1).name("edgeThickness").onChange(drawGrid);
 
     const copyText = async (text) => {
       if (navigator.clipboard && window.isSecureContext) {
