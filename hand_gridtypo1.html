@@ -118,10 +118,14 @@
       fillSize: 1,
       edgeColor: "#9f9f9f",
       edgeThickness: 6,
+      vertexGrabRadius: 14,
+      magnetRadius: 16,
     };
 
     const STORAGE_KEY = "hand-gridtypo1-lilgui";
     const filledSquares = new Set();
+    const vertexOffsets = new Map();
+    let lastLayout = null;
 
     function log(message) {
       const time = new Date().toISOString().slice(11, 19);
@@ -141,7 +145,7 @@
       canvas.height = size;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
-function drawGrid() {
+    function buildLayout() {
       resizeCanvas();
       const width = canvas.getBoundingClientRect().width;
       const height = canvas.getBoundingClientRect().width;
@@ -155,6 +159,29 @@ function drawGrid() {
 
       const cellW = cols === 1 ? innerW : innerW / (cols - 1);
       const cellH = rows === 1 ? innerH : innerH / (rows - 1);
+      const baseVerts = Array.from({ length: rows }, () => Array(cols).fill(null));
+      const verts = Array.from({ length: rows }, () => Array(cols).fill(null));
+      for (let y = 0; y < rows; y += 1) {
+        const ty = rows === 1 ? 0.5 : y / (rows - 1);
+        const by = pad + innerH * ty;
+        for (let x = 0; x < cols; x += 1) {
+          const tx = cols === 1 ? 0.5 : x / (cols - 1);
+          const bx = pad + innerW * tx;
+          const key = `${x},${y}`;
+          const offset = vertexOffsets.get(key) || { dx: 0, dy: 0 };
+          baseVerts[y][x] = { x: bx, y: by };
+          verts[y][x] = { x: bx + offset.dx, y: by + offset.dy };
+        }
+      }
+      lastLayout = { width, height, cols, rows, pad, innerW, innerH, cellW, cellH, baseVerts, verts };
+    }
+
+    function drawGrid() {
+      buildLayout();
+      if (!lastLayout) {
+        return;
+      }
+      const { cols, rows, pad, cellW, cellH, baseVerts, verts } = lastLayout;
 
       ctx.fillStyle = params.fillColor;
       for (const key of filledSquares) {
@@ -162,27 +189,62 @@ function drawGrid() {
         if (Number.isNaN(cx) || Number.isNaN(cy)) {
           continue;
         }
-        const x0 = pad + cellW * cx;
-        const y0 = pad + cellH * cy;
-        const x1 = pad + cellW * (cx + 1);
-        const y1 = pad + cellH * (cy + 1);
-        const fullW = x1 - x0;
-        const fullH = y1 - y0;
-        const fillW = fullW * params.fillSize;
-        const fillH = fullH * params.fillSize;
-        if (params.fillSize >= 0.999) {
-          const left = Math.floor(x0);
-          const top = Math.floor(y0);
-          const right = Math.ceil(x1);
-          const bottom = Math.ceil(y1);
-          ctx.fillRect(left, top, right - left, bottom - top);
-        } else {
-          const px = x0 + (fullW - fillW) / 2;
-          const py = y0 + (fullH - fillH) / 2;
-          ctx.fillRect(px, py, fillW, fillH);
+        const v00 = verts[cy]?.[cx];
+        const v10 = verts[cy]?.[cx + 1];
+        const v11 = verts[cy + 1]?.[cx + 1];
+        const v01 = verts[cy + 1]?.[cx];
+        const b00 = baseVerts[cy]?.[cx];
+        const b10 = baseVerts[cy]?.[cx + 1];
+        const b11 = baseVerts[cy + 1]?.[cx + 1];
+        const b01 = baseVerts[cy + 1]?.[cx];
+        if (!v00 || !v10 || !v11 || !v01 || !b00 || !b10 || !b11 || !b01) {
+          continue;
         }
+        let p0 = { ...v00 };
+        let p1 = { ...v10 };
+        let p2 = { ...v11 };
+        let p3 = { ...v01 };
+        if (params.fillSize < 0.999) {
+          const cxm = (p0.x + p1.x + p2.x + p3.x) / 4;
+          const cym = (p0.y + p1.y + p2.y + p3.y) / 4;
+          p0 = { x: cxm + (p0.x - cxm) * params.fillSize, y: cym + (p0.y - cym) * params.fillSize };
+          p1 = { x: cxm + (p1.x - cxm) * params.fillSize, y: cym + (p1.y - cym) * params.fillSize };
+          p2 = { x: cxm + (p2.x - cxm) * params.fillSize, y: cym + (p2.y - cym) * params.fillSize };
+          p3 = { x: cxm + (p3.x - cxm) * params.fillSize, y: cym + (p3.y - cym) * params.fillSize };
+        } else {
+          p0 = { x: Math.round(p0.x), y: Math.round(p0.y) };
+          p1 = { x: Math.round(p1.x), y: Math.round(p1.y) };
+          p2 = { x: Math.round(p2.x), y: Math.round(p2.y) };
+          p3 = { x: Math.round(p3.x), y: Math.round(p3.y) };
+        }
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(b00.x, b00.y);
+        ctx.lineTo(b10.x, b10.y);
+        ctx.lineTo(b11.x, b11.y);
+        ctx.lineTo(b01.x, b01.y);
+        ctx.closePath();
+        ctx.clip();
+
+        ctx.beginPath();
+        ctx.moveTo(p0.x, p0.y);
+        ctx.lineTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.lineTo(p3.x, p3.y);
+        ctx.closePath();
+        ctx.fill();
+        if (params.fillSize >= 0.999) {
+          ctx.save();
+          ctx.strokeStyle = params.fillColor;
+          ctx.lineWidth = 1;
+          ctx.lineJoin = "miter";
+          ctx.stroke();
+          ctx.restore();
+        }
+        ctx.restore();
       }
 
+      const boundaryVertexKeys = new Set();
       ctx.strokeStyle = params.edgeColor;
       ctx.lineWidth = params.edgeThickness;
       ctx.lineCap = "square";
@@ -191,49 +253,75 @@ function drawGrid() {
         if (Number.isNaN(cx) || Number.isNaN(cy)) {
           continue;
         }
-        const x0 = pad + cellW * cx;
-        const y0 = pad + cellH * cy;
-        const x1 = pad + cellW * (cx + 1);
-        const y1 = pad + cellH * (cy + 1);
+        const v00 = verts[cy]?.[cx];
+        const v10 = verts[cy]?.[cx + 1];
+        const v11 = verts[cy + 1]?.[cx + 1];
+        const v01 = verts[cy + 1]?.[cx];
+        if (!v00 || !v10 || !v11 || !v01) {
+          continue;
+        }
         const leftKey = `${cx - 1},${cy}`;
         const rightKey = `${cx + 1},${cy}`;
         const upKey = `${cx},${cy - 1}`;
         const downKey = `${cx},${cy + 1}`;
         if (cx === 0 || !filledSquares.has(leftKey)) {
           ctx.beginPath();
-          ctx.moveTo(x0, y0);
-          ctx.lineTo(x0, y1);
+          ctx.moveTo(v00.x, v00.y);
+          ctx.lineTo(v01.x, v01.y);
           ctx.stroke();
+          boundaryVertexKeys.add(`${cx},${cy}`);
+          boundaryVertexKeys.add(`${cx},${cy + 1}`);
         }
         if (cx === cols - 2 || !filledSquares.has(rightKey)) {
           ctx.beginPath();
-          ctx.moveTo(x1, y0);
-          ctx.lineTo(x1, y1);
+          ctx.moveTo(v10.x, v10.y);
+          ctx.lineTo(v11.x, v11.y);
           ctx.stroke();
+          boundaryVertexKeys.add(`${cx + 1},${cy}`);
+          boundaryVertexKeys.add(`${cx + 1},${cy + 1}`);
         }
         if (cy === 0 || !filledSquares.has(upKey)) {
           ctx.beginPath();
-          ctx.moveTo(x0, y0);
-          ctx.lineTo(x1, y0);
+          ctx.moveTo(v00.x, v00.y);
+          ctx.lineTo(v10.x, v10.y);
           ctx.stroke();
+          boundaryVertexKeys.add(`${cx},${cy}`);
+          boundaryVertexKeys.add(`${cx + 1},${cy}`);
         }
         if (cy === rows - 2 || !filledSquares.has(downKey)) {
           ctx.beginPath();
-          ctx.moveTo(x0, y1);
-          ctx.lineTo(x1, y1);
+          ctx.moveTo(v01.x, v01.y);
+          ctx.lineTo(v11.x, v11.y);
           ctx.stroke();
+          boundaryVertexKeys.add(`${cx},${cy + 1}`);
+          boundaryVertexKeys.add(`${cx + 1},${cy + 1}`);
         }
       }
 
       ctx.fillStyle = params.dotColor;
       for (let y = 0; y < rows; y += 1) {
-        const ty = rows === 1 ? 0.5 : y / (rows - 1);
-        const py = pad + innerH * ty;
         for (let x = 0; x < cols; x += 1) {
-          const tx = cols === 1 ? 0.5 : x / (cols - 1);
-          const px = pad + innerW * tx;
+          const v = baseVerts[y][x];
+          if (!v) {
+            continue;
+          }
           ctx.beginPath();
-          ctx.arc(px, py, params.dotRadius, 0, Math.PI * 2);
+          ctx.arc(v.x, v.y, params.dotRadius, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      if (filledSquares.size > 0) {
+        ctx.fillStyle = params.edgeColor;
+        const vertexRadius = Math.max(2, Math.floor(params.edgeThickness));
+        for (const vKey of boundaryVertexKeys) {
+          const [vx, vy] = vKey.split(",").map((v) => Number(v));
+          const v = verts[vy]?.[vx];
+          if (!v) {
+            continue;
+          }
+          ctx.beginPath();
+          ctx.arc(v.x, v.y, vertexRadius, 0, Math.PI * 2);
           ctx.fill();
         }
       }
@@ -249,6 +337,8 @@ function drawGrid() {
     gui.add(params, "fillSize", 0.2, 1, 0.05).name("fillSize").onChange(drawGrid);
     gui.addColor(params, "edgeColor").name("edgeColor").onChange(drawGrid);
     gui.add(params, "edgeThickness", 1, 10, 1).name("edgeThickness").onChange(drawGrid);
+    gui.add(params, "vertexGrabRadius", 6, 30, 1).name("vertexGrabRadius").onChange(drawGrid);
+    gui.add(params, "magnetRadius", 4, 40, 1).name("magnetRadius").onChange(drawGrid);
 
     const copyText = async (text) => {
       if (navigator.clipboard && window.isSecureContext) {
@@ -362,6 +452,103 @@ function drawGrid() {
     let isPainting = false;
     let paintValue = true;
     let lastPaintKey = null;
+    let draggingVertexKey = null;
+    let pendingDraw = false;
+
+    function scheduleDraw() {
+      if (pendingDraw) {
+        return;
+      }
+      pendingDraw = true;
+      requestAnimationFrame(() => {
+        pendingDraw = false;
+        drawGrid();
+      });
+    }
+
+    function findNearestVertex(x, y) {
+      if (filledSquares.size === 0) {
+        return null;
+      }
+      if (!lastLayout) {
+        return null;
+      }
+      const { cols, rows, verts } = lastLayout;
+      const vertexKeys = new Set();
+      for (const key of filledSquares) {
+        const [cx, cy] = key.split(",").map((v) => Number(v));
+        if (Number.isNaN(cx) || Number.isNaN(cy)) {
+          continue;
+        }
+        const leftKey = `${cx - 1},${cy}`;
+        const rightKey = `${cx + 1},${cy}`;
+        const upKey = `${cx},${cy - 1}`;
+        const downKey = `${cx},${cy + 1}`;
+        if (cx === 0 || !filledSquares.has(leftKey)) {
+          vertexKeys.add(`${cx},${cy}`);
+          vertexKeys.add(`${cx},${cy + 1}`);
+        }
+        if (cx === cols - 2 || !filledSquares.has(rightKey)) {
+          vertexKeys.add(`${cx + 1},${cy}`);
+          vertexKeys.add(`${cx + 1},${cy + 1}`);
+        }
+        if (cy === 0 || !filledSquares.has(upKey)) {
+          vertexKeys.add(`${cx},${cy}`);
+          vertexKeys.add(`${cx + 1},${cy}`);
+        }
+        if (cy === rows - 2 || !filledSquares.has(downKey)) {
+          vertexKeys.add(`${cx},${cy + 1}`);
+          vertexKeys.add(`${cx + 1},${cy + 1}`);
+        }
+      }
+      let best = null;
+      let bestDist = Infinity;
+      for (const vKey of vertexKeys) {
+        const [vx, vy] = vKey.split(",").map((v) => Number(v));
+        const v = verts[vy]?.[vx];
+        if (!v) {
+          continue;
+        }
+        const dx = v.x - x;
+        const dy = v.y - y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < bestDist) {
+          bestDist = d2;
+          best = { x: vx, y: vy, pos: v, dist: Math.sqrt(d2) };
+        }
+      }
+      if (!best || best.dist > params.vertexGrabRadius) {
+        return null;
+      }
+      return best;
+    }
+
+    function snapToMagnet(x, y, excludeKey) {
+      if (!lastLayout) {
+        return { x, y };
+      }
+      const { cols, rows, verts, baseVerts } = lastLayout;
+      let best = null;
+      let bestDist = params.magnetRadius;
+      for (let vy = 0; vy < rows; vy += 1) {
+        for (let vx = 0; vx < cols; vx += 1) {
+          const key = `${vx},${vy}`;
+          const base = baseVerts[vy][vx];
+          const moved = verts[vy][vx];
+          const candidates = key === excludeKey ? [base] : [base, moved];
+          for (const v of candidates) {
+            const dx = v.x - x;
+            const dy = v.y - y;
+            const dist = Math.hypot(dx, dy);
+            if (dist <= bestDist) {
+              bestDist = dist;
+              best = { x: v.x, y: v.y };
+            }
+          }
+        }
+      }
+      return best ? best : { x, y };
+    }
 
     canvas.addEventListener("contextmenu", (event) => {
       event.preventDefault();
@@ -373,41 +560,65 @@ function drawGrid() {
       const y = event.clientY - rect.top;
       if (event.button === 0) {
         const key = keyFromPoint(x, y);
-        if (!key) {
-          return;
-        }
-        isPainting = true;
-        paintValue = false;
-        lastPaintKey = key;
-        canvas.setPointerCapture(event.pointerId);
-        if (setSquareByKey(key, paintValue)) {
-          drawGrid();
+        const nearest = findNearestVertex(x, y);
+        if (nearest) {
+          draggingVertexKey = `${nearest.x},${nearest.y}`;
+          isPainting = false;
+          lastPaintKey = null;
+          canvas.setPointerCapture(event.pointerId);
+        } else {
+          if (!key) {
+            return;
+          }
+          isPainting = true;
+          paintValue = false;
+          lastPaintKey = key;
+          draggingVertexKey = null;
+          canvas.setPointerCapture(event.pointerId);
+          if (setSquareByKey(key, paintValue)) {
+            scheduleDraw();
+          }
         }
       } else if (event.button === 2) {
         isPainting = true;
         paintValue = true;
         lastPaintKey = null;
+        draggingVertexKey = null;
         canvas.setPointerCapture(event.pointerId);
         if (setSquareAt(x, y, paintValue)) {
-          drawGrid();
+          scheduleDraw();
         }
       }
     });
 
     canvas.addEventListener("pointermove", (event) => {
-      if (!isPainting) {
-        return;
-      }
       const rect = canvas.getBoundingClientRect();
       const x = event.clientX - rect.left;
       const y = event.clientY - rect.top;
+      if (draggingVertexKey) {
+        if (!lastLayout) {
+          return;
+        }
+        const [vx, vy] = draggingVertexKey.split(",").map((v) => Number(v));
+        const base = lastLayout.baseVerts[vy]?.[vx];
+        if (!base) {
+          return;
+        }
+        const snapped = snapToMagnet(x, y, draggingVertexKey);
+        vertexOffsets.set(draggingVertexKey, { dx: snapped.x - base.x, dy: snapped.y - base.y });
+        scheduleDraw();
+        return;
+      }
+      if (!isPainting) {
+        return;
+      }
       const key = keyFromPoint(x, y);
       if (!key || key === lastPaintKey) {
         return;
       }
       lastPaintKey = key;
       if (setSquareByKey(key, paintValue)) {
-        drawGrid();
+        scheduleDraw();
       }
     });
 
@@ -417,11 +628,16 @@ function drawGrid() {
         lastPaintKey = null;
         canvas.releasePointerCapture(event.pointerId);
       }
+      if (draggingVertexKey) {
+        draggingVertexKey = null;
+        canvas.releasePointerCapture(event.pointerId);
+      }
     });
 
     canvas.addEventListener("pointercancel", () => {
       isPainting = false;
       lastPaintKey = null;
+      draggingVertexKey = null;
     });
 
     window.addEventListener("resize", drawGrid);
