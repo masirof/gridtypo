@@ -490,7 +490,9 @@
         }
       }
       lastBoundaryVertexKeys = new Set(boundaryVertexKeys);
-      renderCellDebug();
+      if (!draggingVertexKey) {
+        renderCellDebug();
+      }
     }
 
     const gui = new GUI({ container: guiHost, title: "Grid" });
@@ -744,26 +746,18 @@
       if (!lastLayout) {
         return { x, y };
       }
-      const { cols, rows, verts, baseVerts } = lastLayout;
+      const { cols, rows, baseVerts } = lastLayout;
       let best = null;
       let bestDist = params.magnetRadius;
       for (let vy = 0; vy < rows; vy += 1) {
         for (let vx = 0; vx < cols; vx += 1) {
-          const key = `${vx},${vy}`;
-          if (key === excludeKey) {
-            continue;
-          }
           const base = baseVerts[vy][vx];
-          const moved = verts[vy][vx];
-          const candidates = [base, moved];
-          for (const v of candidates) {
-            const dx = v.x - x;
-            const dy = v.y - y;
-            const dist = Math.hypot(dx, dy);
-            if (dist <= bestDist) {
-              bestDist = dist;
-              best = { x: v.x, y: v.y };
-            }
+          const dx = base.x - x;
+          const dy = base.y - y;
+          const dist = Math.hypot(dx, dy);
+          if (dist <= bestDist) {
+            bestDist = dist;
+            best = { x: base.x, y: base.y };
           }
         }
       }
