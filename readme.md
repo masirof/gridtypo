@@ -88,6 +88,14 @@ fillsize1のときは、各点を頂点として1マス塗りたい
   - 頂点追加ツール
   - 辺を曲げるツール
 
+## テスト
+npx vitest --ui
+npx vitest
+
+describe= group
+it= テスト単体
+<!-- コマンドのオプションいろいろつけるならpackage.json書いてnpm run test -->
+
 ## デザイン 色
 全部の背景色 363636にして
 境界線を 5e5e5eにして
