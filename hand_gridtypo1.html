@@ -266,88 +266,29 @@
       }
 
       ctx.fillStyle = params.fillColor;
-      if (params.fillSize >= 0.999 && boundarySegments.length > 0) {
-        const edgeKey = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
-        const adjacency = new Map();
-        for (const seg of boundarySegments) {
-          if (!adjacency.has(seg.a)) {
-            adjacency.set(seg.a, []);
-          }
-          if (!adjacency.has(seg.b)) {
-            adjacency.set(seg.b, []);
-          }
-          adjacency.get(seg.a).push(seg.b);
-          adjacency.get(seg.b).push(seg.a);
-        }
-
-        const loops = [];
-        const used = new Set();
-        for (const seg of boundarySegments) {
-          const startEdge = edgeKey(seg.a, seg.b);
-          if (used.has(startEdge)) {
+      if (params.fillSize >= 0.999 && filledSquares.size > 0) {
+        ctx.save();
+        ctx.beginPath();
+        for (const key of filledSquares) {
+          const [cx, cy] = key.split(",").map((v) => Number(v));
+          if (Number.isNaN(cx) || Number.isNaN(cy)) {
             continue;
           }
-          let start = seg.a;
-          let current = seg.a;
-          let next = seg.b;
-          const path = [start];
-          while (true) {
-            const eKey = edgeKey(current, next);
-            if (used.has(eKey)) {
-              break;
-            }
-            used.add(eKey);
-            path.push(next);
-            const neighbors = adjacency.get(next) || [];
-            let candidate = null;
-            for (const n of neighbors) {
-              const nKey = edgeKey(next, n);
-              if (!used.has(nKey)) {
-                candidate = n;
-                break;
-              }
-            }
-            if (!candidate) {
-              if (next === start) {
-                loops.push(path);
-              }
-              break;
-            }
-            current = next;
-            next = candidate;
-            if (next === start) {
-              path.push(start);
-              loops.push(path);
-              break;
-            }
+          const v00 = verts[cy]?.[cx];
+          const v10 = verts[cy]?.[cx + 1];
+          const v11 = verts[cy + 1]?.[cx + 1];
+          const v01 = verts[cy + 1]?.[cx];
+          if (!v00 || !v10 || !v11 || !v01) {
+            continue;
           }
+          ctx.moveTo(v00.x, v00.y);
+          ctx.lineTo(v10.x, v10.y);
+          ctx.lineTo(v11.x, v11.y);
+          ctx.lineTo(v01.x, v01.y);
+          ctx.closePath();
         }
-
-        if (loops.length > 0) {
-          ctx.save();
-          ctx.beginPath();
-          for (const loop of loops) {
-            let started = false;
-            for (const vKey of loop) {
-              const [vx, vy] = vKey.split(",").map((v) => Number(v));
-              const v = verts[vy]?.[vx];
-              if (!v) {
-                continue;
-              }
-              if (!started) {
-                ctx.moveTo(v.x, v.y);
-                started = true;
-              } else {
-                ctx.lineTo(v.x, v.y);
-              }
-            }
-            if (started) {
-              ctx.closePath();
-            }
-          }
-          ctx.fill("evenodd");
-          ctx.restore();
-        }
+        ctx.fill();
+        ctx.restore();
       } else {
         for (const key of filledSquares) {
           const [cx, cy] = key.split(",").map((v) => Number(v));
@@ -612,6 +553,21 @@
       }
     }
 
+    function clearCellByKey(key) {
+      if (!key) {
+        return false;
+      }
+      const hadCell = filledSquares.delete(key);
+      clearCellVertexOffsets(key);
+      pruneVertexOffsets();
+      if (hadCell) {
+        logCell(`Cell cleared: ${key}`);
+      } else {
+        logCell(`Cell vertex cleared: ${key}`);
+      }
+      return true;
+    }
+
     function clearCellVertexOffsets(cellKey) {
       const [cx, cy] = cellKey.split(",").map((v) => Number(v));
       if (Number.isNaN(cx) || Number.isNaN(cy)) {
@@ -656,6 +612,95 @@
     function setSquareAt(x, y, filled) {
       const key = keyFromPoint(x, y);
       return setSquareByKey(key, filled);
+    }
+
+    function getCellKeysFromPosition(x, y, layout) {
+      const { cols, rows, pad, innerW, innerH } = layout;
+      if (x < pad || y < pad || x > pad + innerW || y > pad + innerH) {
+        return [];
+      }
+      const cellW = cols === 1 ? innerW : innerW / (cols - 1);
+      const cellH = rows === 1 ? innerH : innerH / (rows - 1);
+      const maxX = Math.max(0, cols - 2);
+      const maxY = Math.max(0, rows - 2);
+      const gx = (x - pad) / cellW;
+      const gy = (y - pad) / cellH;
+      const baseX = Math.min(maxX, Math.max(0, Math.floor(gx)));
+      const baseY = Math.min(maxY, Math.max(0, Math.floor(gy)));
+      const epsPx = 2;
+      const xKeys = new Set([baseX]);
+      const yKeys = new Set([baseY]);
+      const nearestX = Math.round(gx);
+      const nearestY = Math.round(gy);
+      if (Math.abs((gx - nearestX) * cellW) <= epsPx) {
+        const left = nearestX - 1;
+        const right = nearestX;
+        if (left >= 0 && left <= maxX) {
+          xKeys.add(left);
+        }
+        if (right >= 0 && right <= maxX) {
+          xKeys.add(right);
+        }
+      }
+      if (Math.abs((gy - nearestY) * cellH) <= epsPx) {
+        const top = nearestY - 1;
+        const bottom = nearestY;
+        if (top >= 0 && top <= maxY) {
+          yKeys.add(top);
+        }
+        if (bottom >= 0 && bottom <= maxY) {
+          yKeys.add(bottom);
+        }
+      }
+      const keys = [];
+      for (const cx of xKeys) {
+        for (const cy of yKeys) {
+          keys.push(`${cx},${cy}`);
+        }
+      }
+      return keys;
+    }
+
+    function getBaseAt(ix, iy, layout) {
+      const { cols, rows, pad, innerW, innerH } = layout;
+      const tx = cols === 1 ? 0.5 : ix / (cols - 1);
+      const ty = rows === 1 ? 0.5 : iy / (rows - 1);
+      return { x: pad + innerW * tx, y: pad + innerH * ty };
+    }
+
+    function cellHasVertexData(cellKey) {
+      if (!cellKey) {
+        return false;
+      }
+      if (!lastLayout) {
+        buildLayout();
+      }
+      if (!lastLayout) {
+        return false;
+      }
+      const layout = lastLayout;
+      const rootKeys = new Set();
+      for (const key of vertexOffsets.keys()) {
+        rootKeys.add(getRootVertex(key));
+      }
+      for (const target of mergedTo.values()) {
+        rootKeys.add(getRootVertex(target));
+      }
+      for (const rootKey of rootKeys) {
+        const [rx, ry] = rootKey.split(",").map((v) => Number(v));
+        if (Number.isNaN(rx) || Number.isNaN(ry)) {
+          continue;
+        }
+        const base = getBaseAt(rx, ry, layout);
+        const offset = vertexOffsets.get(rootKey) || { dx: 0, dy: 0 };
+        const px = base.x + offset.dx;
+        const py = base.y + offset.dy;
+        const atCells = getCellKeysFromPosition(px, py, layout);
+        if (atCells.includes(cellKey)) {
+          return true;
+        }
+      }
+      return false;
     }
 
     function toggleSquareAt(x, y) {
@@ -820,12 +865,25 @@
           if (!key) {
             return;
           }
-          isPainting = true;
+          const shouldClear = filledSquares.has(key) || cellHasVertexData(key);
+          if (shouldClear) {
+            isPainting = true;
+            paintValue = false;
+            lastPaintKey = key;
+            canvas.setPointerCapture(event.pointerId);
+            clearCellByKey(key);
+            scheduleDraw();
+            return;
+          }
+          isPainting = false;
           paintValue = false;
-          lastPaintKey = key;
+          lastPaintKey = null;
           draggingVertexKey = null;
+          isPainting = true;
+          paintValue = true;
+          lastPaintKey = key;
           canvas.setPointerCapture(event.pointerId);
-          if (setSquareByKey(key, paintValue)) {
+          if (setSquareByKey(key, true)) {
             scheduleDraw();
           }
         }
@@ -875,6 +933,9 @@
     });
 
     canvas.addEventListener("pointerup", (event) => {
+      const rect = canvas.getBoundingClientRect();
+      const upX = event.clientX - rect.left;
+      const upY = event.clientY - rect.top;
       if (isPainting) {
         isPainting = false;
         lastPaintKey = null;
@@ -894,7 +955,7 @@
           if (base) {
             const current = { x: base.x + dragLastOffset.dx, y: base.y + dragLastOffset.dy };
             const snapped = snapToMerge(current.x, current.y, draggingVertexKey);
-            if (snapped.key && snapped.key !== draggingVertexKey) {
+            if (snapped.key && snapped.key !== draggingVertexKey && snapped.source === "moved") {
               const targetRoot = getRootVertex(snapped.key);
               if (targetRoot && targetRoot !== draggingVertexKey) {
                 const targetBase = lastLayout.baseVerts[Number(targetRoot.split(",")[1])]?.[Number(targetRoot.split(",")[0])];
@@ -903,6 +964,16 @@
                   vertexOffsets.set(targetRoot, { dx: snapped.x - targetBase.x, dy: snapped.y - targetBase.y });
                   vertexOffsets.delete(draggingVertexKey);
                   logCell(`Vertex merged: ${draggingVertexKey} -> ${targetRoot} source=${snapped.source} dist=${snapped.dist.toFixed(2)}`);
+                  const upDist = Math.hypot(upX - snapped.x, upY - snapped.y);
+                  if (upDist <= params.mergeRadius) {
+                    const cellKeys = getCellKeysFromPosition(snapped.x, snapped.y, lastLayout);
+                    for (const cellKey of cellKeys) {
+                      if (!filledSquares.has(cellKey)) {
+                        filledSquares.add(cellKey);
+                        logCell(`Cell auto-added: ${cellKey}`);
+                      }
+                    }
+                  }
                 }
               } else {
                 mergedTo.delete(draggingVertexKey);
