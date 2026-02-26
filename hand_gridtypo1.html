@@ -122,12 +122,16 @@
       edgeThickness: 6,
       vertexGrabRadius: 14,
       magnetRadius: 16,
+      mergeRadius: 12,
     };
 
     const STORAGE_KEY = "hand-gridtypo1-lilgui";
     const filledSquares = new Set();
     const vertexOffsets = new Map();
+    const mergedTo = new Map();
+    const cellLogLines = [];
     let lastLayout = null;
+    let lastBoundaryVertexKeys = new Set();
 
     function log(message) {
       const time = new Date().toISOString().slice(11, 19);
@@ -136,7 +140,30 @@
 
     function logCell(message) {
       const time = new Date().toISOString().slice(11, 19);
-      cellDebugEl.textContent = `[${time}] ${message}\n` + cellDebugEl.textContent;
+      cellLogLines.unshift(`[${time}] ${message}`);
+      renderCellDebug();
+    }
+
+    function renderCellDebug() {
+      const filledList = Array.from(filledSquares.values()).sort();
+      const vertexList = Array.from(lastBoundaryVertexKeys.values()).sort();
+      const movedList = [];
+      for (const [key, offset] of vertexOffsets.entries()) {
+        movedList.push(`${key} dx=${offset.dx.toFixed(2)} dy=${offset.dy.toFixed(2)}`);
+      }
+      movedList.sort();
+      const mergedList = [];
+      for (const [key, target] of mergedTo.entries()) {
+        mergedList.push(`${key} -> ${target}`);
+      }
+      mergedList.sort();
+      const summary = [
+        `Filled cells (${filledList.length}): ${filledList.join(" ") || "-"}`,
+        `Boundary vertices (${vertexList.length}): ${vertexList.join(" ") || "-"}`,
+        `Moved vertices (${movedList.length}): ${movedList.join(" | ") || "-"}`,
+        `Merged vertices (${mergedList.length}): ${mergedList.join(" | ") || "-"}`,
+      ].join("\n");
+      cellDebugEl.textContent = `${summary}\n\n${cellLogLines.join("\n")}`.trim();
     }
 
     function setStatus(text) {
@@ -152,6 +179,23 @@
       canvas.height = size;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
+    function getRootVertex(key) {
+      let current = key;
+      const seen = new Set();
+      while (mergedTo.has(current)) {
+        if (seen.has(current)) {
+          break;
+        }
+        seen.add(current);
+        current = mergedTo.get(current);
+      }
+      return current;
+    }
+
+    function normalizeVertexKey(key) {
+      return getRootVertex(key);
+    }
+
     function buildLayout() {
       resizeCanvas();
       const width = canvas.getBoundingClientRect().width;
@@ -168,16 +212,23 @@
       const cellH = rows === 1 ? innerH : innerH / (rows - 1);
       const baseVerts = Array.from({ length: rows }, () => Array(cols).fill(null));
       const verts = Array.from({ length: rows }, () => Array(cols).fill(null));
+      const baseAt = (ix, iy) => {
+        const tx = cols === 1 ? 0.5 : ix / (cols - 1);
+        const ty = rows === 1 ? 0.5 : iy / (rows - 1);
+        return { x: pad + innerW * tx, y: pad + innerH * ty };
+      };
       for (let y = 0; y < rows; y += 1) {
         const ty = rows === 1 ? 0.5 : y / (rows - 1);
         const by = pad + innerH * ty;
         for (let x = 0; x < cols; x += 1) {
-          const tx = cols === 1 ? 0.5 : x / (cols - 1);
-          const bx = pad + innerW * tx;
           const key = `${x},${y}`;
-          const offset = vertexOffsets.get(key) || { dx: 0, dy: 0 };
-          baseVerts[y][x] = { x: bx, y: by };
-          verts[y][x] = { x: bx + offset.dx, y: by + offset.dy };
+          const rootKey = getRootVertex(key);
+          const offset = vertexOffsets.get(rootKey) || { dx: 0, dy: 0 };
+          const base = baseAt(x, y);
+          baseVerts[y][x] = base;
+          const [rx, ry] = rootKey.split(",").map((v) => Number(v));
+          const rootBase = Number.isNaN(rx) || Number.isNaN(ry) ? base : baseAt(rx, ry);
+          verts[y][x] = { x: rootBase.x + offset.dx, y: rootBase.y + offset.dy };
         }
       }
       lastLayout = { width, height, cols, rows, pad, innerW, innerH, cellW, cellH, baseVerts, verts };
@@ -376,32 +427,32 @@
           ctx.moveTo(v00.x, v00.y);
           ctx.lineTo(v01.x, v01.y);
           ctx.stroke();
-          boundaryVertexKeys.add(`${cx},${cy}`);
-          boundaryVertexKeys.add(`${cx},${cy + 1}`);
+          boundaryVertexKeys.add(normalizeVertexKey(`${cx},${cy}`));
+          boundaryVertexKeys.add(normalizeVertexKey(`${cx},${cy + 1}`));
         }
         if (cx === cols - 2 || !filledSquares.has(rightKey)) {
           ctx.beginPath();
           ctx.moveTo(v10.x, v10.y);
           ctx.lineTo(v11.x, v11.y);
           ctx.stroke();
-          boundaryVertexKeys.add(`${cx + 1},${cy}`);
-          boundaryVertexKeys.add(`${cx + 1},${cy + 1}`);
+          boundaryVertexKeys.add(normalizeVertexKey(`${cx + 1},${cy}`));
+          boundaryVertexKeys.add(normalizeVertexKey(`${cx + 1},${cy + 1}`));
         }
         if (cy === 0 || !filledSquares.has(upKey)) {
           ctx.beginPath();
           ctx.moveTo(v00.x, v00.y);
           ctx.lineTo(v10.x, v10.y);
           ctx.stroke();
-          boundaryVertexKeys.add(`${cx},${cy}`);
-          boundaryVertexKeys.add(`${cx + 1},${cy}`);
+          boundaryVertexKeys.add(normalizeVertexKey(`${cx},${cy}`));
+          boundaryVertexKeys.add(normalizeVertexKey(`${cx + 1},${cy}`));
         }
         if (cy === rows - 2 || !filledSquares.has(downKey)) {
           ctx.beginPath();
           ctx.moveTo(v01.x, v01.y);
           ctx.lineTo(v11.x, v11.y);
           ctx.stroke();
-          boundaryVertexKeys.add(`${cx},${cy + 1}`);
-          boundaryVertexKeys.add(`${cx + 1},${cy + 1}`);
+          boundaryVertexKeys.add(normalizeVertexKey(`${cx},${cy + 1}`));
+          boundaryVertexKeys.add(normalizeVertexKey(`${cx + 1},${cy + 1}`));
         }
       }
 
@@ -421,17 +472,25 @@
       if (filledSquares.size > 0) {
         ctx.fillStyle = params.edgeColor;
         const vertexRadius = Math.max(2, Math.floor(params.edgeThickness));
+        const drawnPositions = new Set();
         for (const vKey of boundaryVertexKeys) {
           const [vx, vy] = vKey.split(",").map((v) => Number(v));
           const v = verts[vy]?.[vx];
           if (!v) {
             continue;
           }
+          const posKey = `${Math.round(v.x)}|${Math.round(v.y)}`;
+          if (drawnPositions.has(posKey)) {
+            continue;
+          }
+          drawnPositions.add(posKey);
           ctx.beginPath();
           ctx.arc(v.x, v.y, vertexRadius, 0, Math.PI * 2);
           ctx.fill();
         }
       }
+      lastBoundaryVertexKeys = new Set(boundaryVertexKeys);
+      renderCellDebug();
     }
 
     const gui = new GUI({ container: guiHost, title: "Grid" });
@@ -446,6 +505,7 @@
     gui.add(params, "edgeThickness", 1, 10, 1).name("edgeThickness").onChange(drawGrid);
     gui.add(params, "vertexGrabRadius", 6, 30, 1).name("vertexGrabRadius").onChange(drawGrid);
     gui.add(params, "magnetRadius", 4, 40, 1).name("magnetRadius").onChange(drawGrid);
+    gui.add(params, "mergeRadius", 2, 40, 1).name("mergeRadius").onChange(drawGrid);
 
     const copyText = async (text) => {
       if (navigator.clipboard && window.isSecureContext) {
@@ -555,10 +615,16 @@
       if (Number.isNaN(cx) || Number.isNaN(cy)) {
         return;
       }
-      vertexOffsets.delete(`${cx},${cy}`);
-      vertexOffsets.delete(`${cx + 1},${cy}`);
-      vertexOffsets.delete(`${cx},${cy + 1}`);
-      vertexOffsets.delete(`${cx + 1},${cy + 1}`);
+      const keys = [
+        `${cx},${cy}`,
+        `${cx + 1},${cy}`,
+        `${cx},${cy + 1}`,
+        `${cx + 1},${cy + 1}`,
+      ];
+      for (const key of keys) {
+        vertexOffsets.delete(key);
+        mergedTo.delete(key);
+      }
     }
 
     function pruneVertexOffsets() {
@@ -576,6 +642,11 @@
       for (const key of vertexOffsets.keys()) {
         if (!active.has(key)) {
           vertexOffsets.delete(key);
+        }
+      }
+      for (const key of mergedTo.keys()) {
+        if (!active.has(key)) {
+          mergedTo.delete(key);
         }
       }
     }
@@ -629,20 +700,20 @@
         const upKey = `${cx},${cy - 1}`;
         const downKey = `${cx},${cy + 1}`;
         if (cx === 0 || !filledSquares.has(leftKey)) {
-          vertexKeys.add(`${cx},${cy}`);
-          vertexKeys.add(`${cx},${cy + 1}`);
+          vertexKeys.add(normalizeVertexKey(`${cx},${cy}`));
+          vertexKeys.add(normalizeVertexKey(`${cx},${cy + 1}`));
         }
         if (cx === cols - 2 || !filledSquares.has(rightKey)) {
-          vertexKeys.add(`${cx + 1},${cy}`);
-          vertexKeys.add(`${cx + 1},${cy + 1}`);
+          vertexKeys.add(normalizeVertexKey(`${cx + 1},${cy}`));
+          vertexKeys.add(normalizeVertexKey(`${cx + 1},${cy + 1}`));
         }
         if (cy === 0 || !filledSquares.has(upKey)) {
-          vertexKeys.add(`${cx},${cy}`);
-          vertexKeys.add(`${cx + 1},${cy}`);
+          vertexKeys.add(normalizeVertexKey(`${cx},${cy}`));
+          vertexKeys.add(normalizeVertexKey(`${cx + 1},${cy}`));
         }
         if (cy === rows - 2 || !filledSquares.has(downKey)) {
-          vertexKeys.add(`${cx},${cy + 1}`);
-          vertexKeys.add(`${cx + 1},${cy + 1}`);
+          vertexKeys.add(normalizeVertexKey(`${cx},${cy + 1}`));
+          vertexKeys.add(normalizeVertexKey(`${cx + 1},${cy + 1}`));
         }
       }
       let best = null;
@@ -664,7 +735,9 @@
       if (!best || best.dist > params.vertexGrabRadius) {
         return null;
       }
-      return best;
+      const rootKey = getRootVertex(`${best.x},${best.y}`);
+      const [rx, ry] = rootKey.split(",").map((v) => Number(v));
+      return { x: rx, y: ry, pos: best.pos, dist: best.dist };
     }
 
     function snapToMagnet(x, y, excludeKey) {
@@ -674,6 +747,38 @@
       const { cols, rows, verts, baseVerts } = lastLayout;
       let best = null;
       let bestDist = params.magnetRadius;
+      for (let vy = 0; vy < rows; vy += 1) {
+        for (let vx = 0; vx < cols; vx += 1) {
+          const key = `${vx},${vy}`;
+          if (key === excludeKey) {
+            continue;
+          }
+          const base = baseVerts[vy][vx];
+          const moved = verts[vy][vx];
+          const candidates = [base, moved];
+          for (const v of candidates) {
+            const dx = v.x - x;
+            const dy = v.y - y;
+            const dist = Math.hypot(dx, dy);
+            if (dist <= bestDist) {
+              bestDist = dist;
+              best = { x: v.x, y: v.y };
+            }
+          }
+        }
+      }
+      return best ? best : { x, y };
+    }
+
+    function snapToMerge(x, y, excludeKey) {
+      if (!lastLayout) {
+        return { x, y, key: null, source: null, dist: Infinity };
+      }
+      const { cols, rows, baseVerts, verts } = lastLayout;
+      let best = null;
+      let bestDist = params.mergeRadius;
+      let bestKey = null;
+      let bestSource = null;
       for (let vy = 0; vy < rows; vy += 1) {
         for (let vx = 0; vx < cols; vx += 1) {
           const key = `${vx},${vy}`;
@@ -687,11 +792,15 @@
             if (dist <= bestDist) {
               bestDist = dist;
               best = { x: v.x, y: v.y };
+              bestKey = key;
+              bestSource = v === moved ? "moved" : "base";
             }
           }
         }
       }
-      return best ? best : { x, y };
+      return best
+        ? { ...best, key: bestKey, source: bestSource, dist: bestDist }
+        : { x, y, key: null, source: null, dist: Infinity };
     }
 
     canvas.addEventListener("contextmenu", (event) => {
@@ -709,6 +818,7 @@
           draggingVertexKey = `${nearest.x},${nearest.y}`;
           isPainting = false;
           lastPaintKey = null;
+          mergedTo.delete(draggingVertexKey);
           dragStartOffset = vertexOffsets.get(draggingVertexKey) || { dx: 0, dy: 0 };
           dragLastOffset = dragStartOffset;
           canvas.setPointerCapture(event.pointerId);
@@ -784,10 +894,37 @@
             logCell(`Vertex moved: ${draggingVertexKey} dx=${dragLastOffset.dx.toFixed(2)} dy=${dragLastOffset.dy.toFixed(2)}`);
           }
         }
+        if (lastLayout && dragLastOffset) {
+          const [vx, vy] = draggingVertexKey.split(",").map((v) => Number(v));
+          const base = lastLayout.baseVerts[vy]?.[vx];
+          if (base) {
+            const current = { x: base.x + dragLastOffset.dx, y: base.y + dragLastOffset.dy };
+            const snapped = snapToMerge(current.x, current.y, draggingVertexKey);
+            if (snapped.key && snapped.key !== draggingVertexKey) {
+              const targetRoot = getRootVertex(snapped.key);
+              if (targetRoot && targetRoot !== draggingVertexKey) {
+                const targetBase = lastLayout.baseVerts[Number(targetRoot.split(",")[1])]?.[Number(targetRoot.split(",")[0])];
+                if (targetBase) {
+                  mergedTo.set(draggingVertexKey, targetRoot);
+                  vertexOffsets.set(targetRoot, { dx: snapped.x - targetBase.x, dy: snapped.y - targetBase.y });
+                  vertexOffsets.delete(draggingVertexKey);
+                  logCell(`Vertex merged: ${draggingVertexKey} -> ${targetRoot} source=${snapped.source} dist=${snapped.dist.toFixed(2)}`);
+                }
+              } else {
+                mergedTo.delete(draggingVertexKey);
+                vertexOffsets.set(draggingVertexKey, { dx: snapped.x - base.x, dy: snapped.y - base.y });
+              }
+            } else {
+              mergedTo.delete(draggingVertexKey);
+              vertexOffsets.set(draggingVertexKey, { dx: snapped.x - base.x, dy: snapped.y - base.y });
+            }
+          }
+        }
         draggingVertexKey = null;
         dragStartOffset = null;
         dragLastOffset = null;
         canvas.releasePointerCapture(event.pointerId);
+        scheduleDraw();
       }
     });
 
