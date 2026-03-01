@@ -96,6 +96,22 @@ describe= group
 it= テスト単体
 <!-- コマンドのオプションいろいろつけるならpackage.json書いてnpm run test -->
 
+以下の条件でVitestのユニットテストを書いてください。vitest-basic.test.ts
+
+- 対象は純粋ロジックのみ
+- CanvasやDOMは使わない Playwrightは禁止
+- clickCellToFill, isFaceFilled, isEdgeFilled, isvertexFilled を使用する
+- グリッド数は hand_gridtypo1.html のparamsに定義してあるので読み込んで
+- (1,1)のマスをクリックした後の状態を検証する
+- 整理して書いて
+
+検証内容:
+1. 面: セル(1,1)が塗り状態になっていること
+2. 辺: 単独セルなので4辺が境界として存在すること
+3. 頂点: 4つの頂点が存在すること
+
+
+
 ## デザイン 色
 全部の背景色 363636にして
 境界線を 5e5e5eにして

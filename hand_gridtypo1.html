@@ -48,13 +48,14 @@
     .main > .stage + .stage {
       border-left: 1px solid #5e5e5e;
     }
-    canvas {
+    svg {
       width: 100%;
       height: auto;
       display: block;
       border-radius: 0;
       background: #363636;
       border: none;
+      touch-action: none;
     }
     .status {
       font-size: 14px;
@@ -88,7 +89,7 @@
     <div class="main">
       <div class="stage">
         <div class="status" id="status">Grid Editor</div>
-        <canvas id="grid"></canvas>
+        <svg id="grid"></svg>
       </div>
       <div class="stage">
         <div id="gui"></div>
@@ -103,12 +104,11 @@
   <script type="module">
     import GUI from "https://cdn.jsdelivr.net/npm/lil-gui@0.19/+esm";
 
-    const canvas = document.getElementById("grid");
+    const svg = document.getElementById("grid");
     const statusEl = document.getElementById("status");
     const debugEl = document.getElementById("debug");
     const cellDebugEl = document.getElementById("cell_debug");
     const guiHost = document.getElementById("gui");
-    const ctx = canvas.getContext("2d");
 
     const params = {
       cols: 5,
@@ -171,13 +171,12 @@
       log(text);
     }
 
-    function resizeCanvas() {
-      const rect = canvas.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
-      const size = Math.max(1, Math.floor(rect.width * dpr));
-      canvas.width = size;
-      canvas.height = size;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    function resizeSvg() {
+      const rect = svg.getBoundingClientRect();
+      const size = Math.max(1, Math.floor(rect.width));
+      svg.setAttribute("width", size);
+      svg.setAttribute("height", size);
+      svg.setAttribute("viewBox", `0 0 ${size} ${size}`);
     }
     function getRootVertex(key) {
       let current = key;
@@ -197,10 +196,9 @@
     }
 
     function buildLayout() {
-      resizeCanvas();
-      const width = canvas.getBoundingClientRect().width;
-      const height = canvas.getBoundingClientRect().width;
-      ctx.clearRect(0, 0, width, height);
+      resizeSvg();
+      const width = svg.getBoundingClientRect().width;
+      const height = svg.getBoundingClientRect().width;
 
       const cols = Math.max(1, Math.floor(params.cols));
       const rows = Math.max(1, Math.floor(params.rows));
@@ -234,119 +232,79 @@
       lastLayout = { width, height, cols, rows, pad, innerW, innerH, cellW, cellH, baseVerts, verts };
     }
 
+    
+    function svgEl(tag, attrs = {}) {
+      const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+      for (const [key, value] of Object.entries(attrs)) {
+        el.setAttribute(key, String(value));
+      }
+      return el;
+    }
+
+    function clearSvg() {
+      while (svg.firstChild) {
+        svg.removeChild(svg.firstChild);
+      }
+    }
     function drawGrid() {
       buildLayout();
       if (!lastLayout) {
         return;
       }
-      const { cols, rows, pad, cellW, cellH, baseVerts, verts } = lastLayout;
+      const { cols, rows, baseVerts, verts } = lastLayout;
 
-      const boundarySegments = [];
+      clearSvg();
+      const defs = svgEl("defs");
+      const facesGroup = svgEl("g", { "data-layer": "faces" });
+      const edgesGroup = svgEl("g", { "data-layer": "edges" });
+      const dotsGroup = svgEl("g", { "data-layer": "dots" });
+      const verticesGroup = svgEl("g", { "data-layer": "vertices" });
+      svg.appendChild(defs);
+      svg.appendChild(facesGroup);
+      svg.appendChild(edgesGroup);
+      svg.appendChild(dotsGroup);
+      svg.appendChild(verticesGroup);
+
       for (const key of filledSquares) {
         const [cx, cy] = key.split(",").map((v) => Number(v));
         if (Number.isNaN(cx) || Number.isNaN(cy)) {
           continue;
         }
-        const leftKey = `${cx - 1},${cy}`;
-        const rightKey = `${cx + 1},${cy}`;
-        const upKey = `${cx},${cy - 1}`;
-        const downKey = `${cx},${cy + 1}`;
-        if (cx === 0 || !filledSquares.has(leftKey)) {
-          boundarySegments.push({ a: `${cx},${cy}`, b: `${cx},${cy + 1}` });
+        const v00 = verts[cy]?.[cx];
+        const v10 = verts[cy]?.[cx + 1];
+        const v11 = verts[cy + 1]?.[cx + 1];
+        const v01 = verts[cy + 1]?.[cx];
+        if (!v00 || !v10 || !v11 || !v01) {
+          continue;
         }
-        if (cx === cols - 2 || !filledSquares.has(rightKey)) {
-          boundarySegments.push({ a: `${cx + 1},${cy}`, b: `${cx + 1},${cy + 1}` });
+        let p0 = { ...v00 };
+        let p1 = { ...v10 };
+        let p2 = { ...v11 };
+        let p3 = { ...v01 };
+        if (params.fillSize < 0.999) {
+          const cxm = (p0.x + p1.x + p2.x + p3.x) / 4;
+          const cym = (p0.y + p1.y + p2.y + p3.y) / 4;
+          p0 = { x: cxm + (p0.x - cxm) * params.fillSize, y: cym + (p0.y - cym) * params.fillSize };
+          p1 = { x: cxm + (p1.x - cxm) * params.fillSize, y: cym + (p1.y - cym) * params.fillSize };
+          p2 = { x: cxm + (p2.x - cxm) * params.fillSize, y: cym + (p2.y - cym) * params.fillSize };
+          p3 = { x: cxm + (p3.x - cxm) * params.fillSize, y: cym + (p3.y - cym) * params.fillSize };
+        } else {
+          p0 = { x: Math.round(p0.x), y: Math.round(p0.y) };
+          p1 = { x: Math.round(p1.x), y: Math.round(p1.y) };
+          p2 = { x: Math.round(p2.x), y: Math.round(p2.y) };
+          p3 = { x: Math.round(p3.x), y: Math.round(p3.y) };
         }
-        if (cy === 0 || !filledSquares.has(upKey)) {
-          boundarySegments.push({ a: `${cx},${cy}`, b: `${cx + 1},${cy}` });
-        }
-        if (cy === rows - 2 || !filledSquares.has(downKey)) {
-          boundarySegments.push({ a: `${cx},${cy + 1}`, b: `${cx + 1},${cy + 1}` });
-        }
-      }
-
-      ctx.fillStyle = params.fillColor;
-      if (params.fillSize >= 0.999 && filledSquares.size > 0) {
-        ctx.save();
-        ctx.beginPath();
-        for (const key of filledSquares) {
-          const [cx, cy] = key.split(",").map((v) => Number(v));
-          if (Number.isNaN(cx) || Number.isNaN(cy)) {
-            continue;
-          }
-          const v00 = verts[cy]?.[cx];
-          const v10 = verts[cy]?.[cx + 1];
-          const v11 = verts[cy + 1]?.[cx + 1];
-          const v01 = verts[cy + 1]?.[cx];
-          if (!v00 || !v10 || !v11 || !v01) {
-            continue;
-          }
-          ctx.moveTo(v00.x, v00.y);
-          ctx.lineTo(v10.x, v10.y);
-          ctx.lineTo(v11.x, v11.y);
-          ctx.lineTo(v01.x, v01.y);
-          ctx.closePath();
-        }
-        ctx.fill();
-        ctx.restore();
-      } else {
-        for (const key of filledSquares) {
-          const [cx, cy] = key.split(",").map((v) => Number(v));
-          if (Number.isNaN(cx) || Number.isNaN(cy)) {
-            continue;
-          }
-          const v00 = verts[cy]?.[cx];
-          const v10 = verts[cy]?.[cx + 1];
-          const v11 = verts[cy + 1]?.[cx + 1];
-          const v01 = verts[cy + 1]?.[cx];
-          const b00 = baseVerts[cy]?.[cx];
-          const b10 = baseVerts[cy]?.[cx + 1];
-          const b11 = baseVerts[cy + 1]?.[cx + 1];
-          const b01 = baseVerts[cy + 1]?.[cx];
-          if (!v00 || !v10 || !v11 || !v01 || !b00 || !b10 || !b11 || !b01) {
-            continue;
-          }
-          let p0 = { ...v00 };
-          let p1 = { ...v10 };
-          let p2 = { ...v11 };
-          let p3 = { ...v01 };
-          if (params.fillSize < 0.999) {
-            const cxm = (p0.x + p1.x + p2.x + p3.x) / 4;
-            const cym = (p0.y + p1.y + p2.y + p3.y) / 4;
-            p0 = { x: cxm + (p0.x - cxm) * params.fillSize, y: cym + (p0.y - cym) * params.fillSize };
-            p1 = { x: cxm + (p1.x - cxm) * params.fillSize, y: cym + (p1.y - cym) * params.fillSize };
-            p2 = { x: cxm + (p2.x - cxm) * params.fillSize, y: cym + (p2.y - cym) * params.fillSize };
-            p3 = { x: cxm + (p3.x - cxm) * params.fillSize, y: cym + (p3.y - cym) * params.fillSize };
-          } else {
-            p0 = { x: Math.round(p0.x), y: Math.round(p0.y) };
-            p1 = { x: Math.round(p1.x), y: Math.round(p1.y) };
-            p2 = { x: Math.round(p2.x), y: Math.round(p2.y) };
-            p3 = { x: Math.round(p3.x), y: Math.round(p3.y) };
-          }
-          ctx.save();
-          ctx.beginPath();
-          ctx.moveTo(b00.x, b00.y);
-          ctx.lineTo(b10.x, b10.y);
-          ctx.lineTo(b11.x, b11.y);
-          ctx.lineTo(b01.x, b01.y);
-          ctx.closePath();
-          ctx.clip();
-
-          ctx.beginPath();
-          ctx.moveTo(p0.x, p0.y);
-          ctx.lineTo(p1.x, p1.y);
-          ctx.lineTo(p2.x, p2.y);
-          ctx.lineTo(p3.x, p3.y);
-          ctx.closePath();
-          ctx.fill();
-          ctx.restore();
-        }
+        const points = `${p0.x},${p0.y} ${p1.x},${p1.y} ${p2.x},${p2.y} ${p3.x},${p3.y}`;
+        const poly = svgEl("polygon", {
+          points,
+          fill: params.fillColor,
+          "data-type": "face",
+          "data-cell": key,
+        });
+        facesGroup.appendChild(poly);
       }
 
       const boundaryVertexKeys = new Set();
-      ctx.strokeStyle = params.edgeColor;
-      ctx.lineWidth = params.edgeThickness;
-      ctx.lineCap = "square";
       for (const key of filledSquares) {
         const [cx, cy] = key.split(",").map((v) => Number(v));
         if (Number.isNaN(cx) || Number.isNaN(cy)) {
@@ -364,56 +322,63 @@
         const upKey = `${cx},${cy - 1}`;
         const downKey = `${cx},${cy + 1}`;
         if (cx === 0 || !filledSquares.has(leftKey)) {
-          ctx.beginPath();
-          ctx.moveTo(v00.x, v00.y);
-          ctx.lineTo(v01.x, v01.y);
-          ctx.stroke();
+          edgesGroup.appendChild(svgEl("line", {
+            x1: v00.x, y1: v00.y, x2: v01.x, y2: v01.y,
+            stroke: params.edgeColor, "stroke-width": params.edgeThickness,
+            "data-type": "edge", "data-edge": "left", "data-cell": key,
+          }));
           boundaryVertexKeys.add(normalizeVertexKey(`${cx},${cy}`));
           boundaryVertexKeys.add(normalizeVertexKey(`${cx},${cy + 1}`));
         }
         if (cx === cols - 2 || !filledSquares.has(rightKey)) {
-          ctx.beginPath();
-          ctx.moveTo(v10.x, v10.y);
-          ctx.lineTo(v11.x, v11.y);
-          ctx.stroke();
+          edgesGroup.appendChild(svgEl("line", {
+            x1: v10.x, y1: v10.y, x2: v11.x, y2: v11.y,
+            stroke: params.edgeColor, "stroke-width": params.edgeThickness,
+            "data-type": "edge", "data-edge": "right", "data-cell": key,
+          }));
           boundaryVertexKeys.add(normalizeVertexKey(`${cx + 1},${cy}`));
           boundaryVertexKeys.add(normalizeVertexKey(`${cx + 1},${cy + 1}`));
         }
         if (cy === 0 || !filledSquares.has(upKey)) {
-          ctx.beginPath();
-          ctx.moveTo(v00.x, v00.y);
-          ctx.lineTo(v10.x, v10.y);
-          ctx.stroke();
+          edgesGroup.appendChild(svgEl("line", {
+            x1: v00.x, y1: v00.y, x2: v10.x, y2: v10.y,
+            stroke: params.edgeColor, "stroke-width": params.edgeThickness,
+            "data-type": "edge", "data-edge": "top", "data-cell": key,
+          }));
           boundaryVertexKeys.add(normalizeVertexKey(`${cx},${cy}`));
           boundaryVertexKeys.add(normalizeVertexKey(`${cx + 1},${cy}`));
         }
         if (cy === rows - 2 || !filledSquares.has(downKey)) {
-          ctx.beginPath();
-          ctx.moveTo(v01.x, v01.y);
-          ctx.lineTo(v11.x, v11.y);
-          ctx.stroke();
+          edgesGroup.appendChild(svgEl("line", {
+            x1: v01.x, y1: v01.y, x2: v11.x, y2: v11.y,
+            stroke: params.edgeColor, "stroke-width": params.edgeThickness,
+            "data-type": "edge", "data-edge": "bottom", "data-cell": key,
+          }));
           boundaryVertexKeys.add(normalizeVertexKey(`${cx},${cy + 1}`));
           boundaryVertexKeys.add(normalizeVertexKey(`${cx + 1},${cy + 1}`));
         }
       }
 
-      ctx.fillStyle = params.dotColor;
       for (let y = 0; y < rows; y += 1) {
         for (let x = 0; x < cols; x += 1) {
           const v = baseVerts[y][x];
           if (!v) {
             continue;
           }
-          ctx.beginPath();
-          ctx.arc(v.x, v.y, params.dotRadius, 0, Math.PI * 2);
-          ctx.fill();
+          dotsGroup.appendChild(svgEl("circle", {
+            cx: v.x,
+            cy: v.y,
+            r: params.dotRadius,
+            fill: params.dotColor,
+            "data-type": "grid-point",
+            "data-vertex": `${x},${y}`,
+          }));
         }
       }
 
       if (filledSquares.size > 0) {
-        ctx.fillStyle = params.edgeColor;
-        const vertexRadius = Math.max(2, Math.floor(params.edgeThickness));
         const drawnPositions = new Set();
+        const vertexRadius = Math.max(2, Math.floor(params.edgeThickness));
         for (const vKey of boundaryVertexKeys) {
           const [vx, vy] = vKey.split(",").map((v) => Number(v));
           const v = verts[vy]?.[vx];
@@ -425,11 +390,17 @@
             continue;
           }
           drawnPositions.add(posKey);
-          ctx.beginPath();
-          ctx.arc(v.x, v.y, vertexRadius, 0, Math.PI * 2);
-          ctx.fill();
+          verticesGroup.appendChild(svgEl("circle", {
+            cx: v.x,
+            cy: v.y,
+            r: vertexRadius,
+            fill: params.edgeColor,
+            "data-type": "vertex",
+            "data-vertex": `${vx},${vy}`,
+          }));
         }
       }
+
       lastBoundaryVertexKeys = new Set(boundaryVertexKeys);
       if (!draggingVertexKey) {
         renderCellDebug();
@@ -500,8 +471,8 @@
     gui.add(io, "copy").name("copy preset");
 
     function cellFromPoint(x, y) {
-      const width = canvas.getBoundingClientRect().width;
-      const height = canvas.getBoundingClientRect().width;
+      const width = svg.getBoundingClientRect().width;
+      const height = svg.getBoundingClientRect().width;
       const cols = Math.max(1, Math.floor(params.cols));
       const rows = Math.max(1, Math.floor(params.rows));
       const pad = Math.max(0, params.padding);
@@ -842,12 +813,12 @@
         : { x, y, key: null, source: null, dist: Infinity };
     }
 
-    canvas.addEventListener("contextmenu", (event) => {
+    svg.addEventListener("contextmenu", (event) => {
       event.preventDefault();
     });
 
-    canvas.addEventListener("pointerdown", (event) => {
-      const rect = canvas.getBoundingClientRect();
+    svg.addEventListener("pointerdown", (event) => {
+      const rect = svg.getBoundingClientRect();
       const x = event.clientX - rect.left;
       const y = event.clientY - rect.top;
       if (event.button === 0) {
@@ -860,7 +831,7 @@
           mergedTo.delete(draggingVertexKey);
           dragStartOffset = vertexOffsets.get(draggingVertexKey) || { dx: 0, dy: 0 };
           dragLastOffset = dragStartOffset;
-          canvas.setPointerCapture(event.pointerId);
+          svg.setPointerCapture(event.pointerId);
         } else {
           if (!key) {
             return;
@@ -870,7 +841,7 @@
             isPainting = true;
             paintValue = false;
             lastPaintKey = key;
-            canvas.setPointerCapture(event.pointerId);
+            svg.setPointerCapture(event.pointerId);
             clearCellByKey(key);
             scheduleDraw();
             return;
@@ -882,7 +853,7 @@
           isPainting = true;
           paintValue = true;
           lastPaintKey = key;
-          canvas.setPointerCapture(event.pointerId);
+          svg.setPointerCapture(event.pointerId);
           if (setSquareByKey(key, true)) {
             scheduleDraw();
           }
@@ -892,15 +863,15 @@
         paintValue = true;
         lastPaintKey = null;
         draggingVertexKey = null;
-        canvas.setPointerCapture(event.pointerId);
+        svg.setPointerCapture(event.pointerId);
         if (setSquareAt(x, y, paintValue)) {
           scheduleDraw();
         }
       }
     });
 
-    canvas.addEventListener("pointermove", (event) => {
-      const rect = canvas.getBoundingClientRect();
+    svg.addEventListener("pointermove", (event) => {
+      const rect = svg.getBoundingClientRect();
       const x = event.clientX - rect.left;
       const y = event.clientY - rect.top;
       if (draggingVertexKey) {
@@ -932,14 +903,14 @@
       }
     });
 
-    canvas.addEventListener("pointerup", (event) => {
-      const rect = canvas.getBoundingClientRect();
+    svg.addEventListener("pointerup", (event) => {
+      const rect = svg.getBoundingClientRect();
       const upX = event.clientX - rect.left;
       const upY = event.clientY - rect.top;
       if (isPainting) {
         isPainting = false;
         lastPaintKey = null;
-        canvas.releasePointerCapture(event.pointerId);
+        svg.releasePointerCapture(event.pointerId);
       }
       if (draggingVertexKey) {
         if (dragStartOffset && dragLastOffset) {
@@ -988,12 +959,12 @@
         draggingVertexKey = null;
         dragStartOffset = null;
         dragLastOffset = null;
-        canvas.releasePointerCapture(event.pointerId);
+        svg.releasePointerCapture(event.pointerId);
         scheduleDraw();
       }
     });
 
-    canvas.addEventListener("pointercancel", () => {
+    svg.addEventListener("pointercancel", () => {
       isPainting = false;
       lastPaintKey = null;
       draggingVertexKey = null;
