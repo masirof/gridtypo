@@ -7,7 +7,10 @@
     "lib": "lib"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build:hand": "esbuild src/hand_gridtypo1.ts --bundle --format=esm --platform=browser --outfile=dist/hand_gridtypo1.js",
+    "build:hand:watch": "esbuild src/hand_gridtypo1.ts --bundle --format=esm --platform=browser --outfile=dist/hand_gridtypo1.js --watch",
+    "test:ui": "concurrently -n \"vitest,playwright\" -c \"cyan,magenta\" \"npx vitest --ui --watch\" \"npx playwright test --ui\""
   },
   "keywords": [],
   "author": "",
@@ -16,6 +19,8 @@
     "@playwright/test": "^1.58.2",
     "@techstark/opencv-js": "^4.12.0-release.1",
     "@vitest/ui": "^4.0.18",
+    "concurrently": "^9.2.1",
+    "esbuild": "^0.27.3",
     "happy-dom": "^20.7.0",
     "jsdom": "^22.1.0",
     "vitest": "^4.0.18"

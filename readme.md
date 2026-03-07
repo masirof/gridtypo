@@ -88,12 +88,29 @@ fillsize1のときは、各点を頂点として1マス塗りたい
   - 頂点追加ツール
   - 辺を曲げるツール
 
-## テスト
-npx vitest --ui
-npx vitest
+## ビルド
+ts→esbuild→js
+- build:hand:watch　してるので、ファイル保存したら自動ビルドされる
 
-describe= group
-it= テスト単体
+## テスト自動起動
+- 別ターミナルで常駐
+- concurrently "npx vitest --ui" "npx playwright test --ui"
+
+
+## テスト
+npm run test:ui
+↑するだけでいい↓が勝手に実行される
+
+npx vitest --ui
+
+- live server起動
+npx playwright test --ui
+
+
+npx vitest
+- vitest
+  - describe= group
+  - it= テスト単体
 <!-- コマンドのオプションいろいろつけるならpackage.json書いてnpm run test -->
 
 以下の条件でVitestのユニットテストを書いてください。vitest-basic.test.ts
