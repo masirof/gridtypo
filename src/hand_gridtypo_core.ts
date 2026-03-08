@@ -18,6 +18,14 @@ export function createState() {
     filledSquares: new Set(),
     vertexOffsets: new Map(),
     mergedTo: new Map(),
+    extraVertices: new Set(),
+    explicitVertices: new Set(),
+    extraVertexRefs: new Map(),
+    extraEdges: new Set(),
+    extraFaces: [],
+    hiddenVertices: new Set(),
+    hiddenEdges: new Set(),
+    hiddenFaces: new Set(),
   };
 }
 
@@ -73,6 +81,101 @@ export function computeVerts(state, layout) {
     }
   }
   return { baseVerts, verts };
+}
+
+export function applyVertexDragRelease(state, layout, draggingKey, targetX, targetY, options) {
+  if (!draggingKey || !layout) {
+    return { merged: false, autoAdded: [], targetKey: null, snapped: null };
+  }
+  const { magnetRadius = 16, mergeRadius = 12 } = options || {};
+  const { baseVerts, verts } = computeVerts(state, layout);
+  const [vx, vy] = draggingKey.split(",").map((v) => Number(v));
+  const base = baseVerts[vy]?.[vx];
+  if (!base) {
+    return { merged: false, autoAdded: [], targetKey: null, snapped: null };
+  }
+
+  const snapToMagnet = () => {
+    const { cols, rows } = layout;
+    let best = null;
+    let bestDist = magnetRadius;
+    for (let y = 0; y < rows; y += 1) {
+      for (let x = 0; x < cols; x += 1) {
+        const b = baseVerts[y][x];
+        const dx = b.x - targetX;
+        const dy = b.y - targetY;
+        const dist = Math.hypot(dx, dy);
+        if (dist <= bestDist) {
+          bestDist = dist;
+          best = { x: b.x, y: b.y };
+        }
+      }
+    }
+    return best || { x: targetX, y: targetY };
+  };
+
+  const snapToMerge = (x, y) => {
+    const { cols, rows } = layout;
+    let best = null;
+    let bestDist = mergeRadius;
+    let bestKey = null;
+    let bestSource = null;
+    for (let yy = 0; yy < rows; yy += 1) {
+      for (let xx = 0; xx < cols; xx += 1) {
+        const key = `${xx},${yy}`;
+        const basePoint = baseVerts[yy][xx];
+        const movedPoint = verts[yy][xx];
+        const candidates = key === draggingKey ? [basePoint] : [basePoint, movedPoint];
+        for (const v of candidates) {
+          const dx = v.x - x;
+          const dy = v.y - y;
+          const dist = Math.hypot(dx, dy);
+          if (dist <= bestDist) {
+            bestDist = dist;
+            best = { x: v.x, y: v.y };
+            bestKey = key;
+            bestSource = v === movedPoint ? "moved" : "base";
+          }
+        }
+      }
+    }
+    return best
+      ? { ...best, key: bestKey, source: bestSource, dist: bestDist }
+      : { x, y, key: null, source: null, dist: Infinity };
+  };
+
+  const snapped = snapToMagnet();
+  const offset = { dx: snapped.x - base.x, dy: snapped.y - base.y };
+  state.vertexOffsets.set(draggingKey, offset);
+  state.mergedTo.delete(draggingKey);
+
+  const mergeCandidate = snapToMerge(snapped.x, snapped.y);
+  if (mergeCandidate.key && mergeCandidate.key !== draggingKey) {
+    const targetRoot = getRootVertex(state, mergeCandidate.key);
+    if (targetRoot && targetRoot !== draggingKey) {
+      const [rx, ry] = targetRoot.split(",").map((v) => Number(v));
+      const targetBase = baseVerts[ry]?.[rx];
+      if (targetBase) {
+        state.mergedTo.set(draggingKey, targetRoot);
+        state.vertexOffsets.set(targetRoot, { dx: mergeCandidate.x - targetBase.x, dy: mergeCandidate.y - targetBase.y });
+        state.vertexOffsets.delete(draggingKey);
+        const upDist = Math.hypot(targetX - mergeCandidate.x, targetY - mergeCandidate.y);
+        const autoAdded = [];
+        if (upDist <= mergeRadius) {
+          const cellKeys = getCellKeysFromPosition(mergeCandidate.x, mergeCandidate.y, layout);
+          for (const cellKey of cellKeys) {
+            if (!state.filledSquares.has(cellKey)) {
+              state.filledSquares.add(cellKey);
+              autoAdded.push(cellKey);
+            }
+          }
+        }
+        return { merged: true, autoAdded, targetKey: targetRoot, snapped: mergeCandidate };
+      }
+    }
+  }
+
+  return { merged: false, autoAdded: [], targetKey: null, snapped };
 }
 
 export function getCellKeysFromPosition(x, y, layout) {

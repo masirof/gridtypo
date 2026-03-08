@@ -17,7 +17,15 @@ function createState() {
   return {
     filledSquares: /* @__PURE__ */ new Set(),
     vertexOffsets: /* @__PURE__ */ new Map(),
-    mergedTo: /* @__PURE__ */ new Map()
+    mergedTo: /* @__PURE__ */ new Map(),
+    extraVertices: /* @__PURE__ */ new Set(),
+    explicitVertices: /* @__PURE__ */ new Set(),
+    extraVertexRefs: /* @__PURE__ */ new Map(),
+    extraEdges: /* @__PURE__ */ new Set(),
+    extraFaces: [],
+    hiddenVertices: /* @__PURE__ */ new Set(),
+    hiddenEdges: /* @__PURE__ */ new Set(),
+    hiddenFaces: /* @__PURE__ */ new Set()
   };
 }
 function buildLayout(width, height, params) {
@@ -68,6 +76,93 @@ function computeVerts(state, layout) {
     }
   }
   return { baseVerts, verts };
+}
+function applyVertexDragRelease(state, layout, draggingKey, targetX, targetY, options) {
+  if (!draggingKey || !layout) {
+    return { merged: false, autoAdded: [], targetKey: null, snapped: null };
+  }
+  const { magnetRadius = 16, mergeRadius = 12 } = options || {};
+  const { baseVerts, verts } = computeVerts(state, layout);
+  const [vx, vy] = draggingKey.split(",").map((v) => Number(v));
+  const base = baseVerts[vy]?.[vx];
+  if (!base) {
+    return { merged: false, autoAdded: [], targetKey: null, snapped: null };
+  }
+  const snapToMagnet = () => {
+    const { cols, rows } = layout;
+    let best = null;
+    let bestDist = magnetRadius;
+    for (let y = 0; y < rows; y += 1) {
+      for (let x = 0; x < cols; x += 1) {
+        const b = baseVerts[y][x];
+        const dx = b.x - targetX;
+        const dy = b.y - targetY;
+        const dist = Math.hypot(dx, dy);
+        if (dist <= bestDist) {
+          bestDist = dist;
+          best = { x: b.x, y: b.y };
+        }
+      }
+    }
+    return best || { x: targetX, y: targetY };
+  };
+  const snapToMerge = (x, y) => {
+    const { cols, rows } = layout;
+    let best = null;
+    let bestDist = mergeRadius;
+    let bestKey = null;
+    let bestSource = null;
+    for (let yy = 0; yy < rows; yy += 1) {
+      for (let xx = 0; xx < cols; xx += 1) {
+        const key = `${xx},${yy}`;
+        const basePoint = baseVerts[yy][xx];
+        const movedPoint = verts[yy][xx];
+        const candidates = key === draggingKey ? [basePoint] : [basePoint, movedPoint];
+        for (const v of candidates) {
+          const dx = v.x - x;
+          const dy = v.y - y;
+          const dist = Math.hypot(dx, dy);
+          if (dist <= bestDist) {
+            bestDist = dist;
+            best = { x: v.x, y: v.y };
+            bestKey = key;
+            bestSource = v === movedPoint ? "moved" : "base";
+          }
+        }
+      }
+    }
+    return best ? { ...best, key: bestKey, source: bestSource, dist: bestDist } : { x, y, key: null, source: null, dist: Infinity };
+  };
+  const snapped = snapToMagnet();
+  const offset = { dx: snapped.x - base.x, dy: snapped.y - base.y };
+  state.vertexOffsets.set(draggingKey, offset);
+  state.mergedTo.delete(draggingKey);
+  const mergeCandidate = snapToMerge(snapped.x, snapped.y);
+  if (mergeCandidate.key && mergeCandidate.key !== draggingKey) {
+    const targetRoot = getRootVertex(state, mergeCandidate.key);
+    if (targetRoot && targetRoot !== draggingKey) {
+      const [rx, ry] = targetRoot.split(",").map((v) => Number(v));
+      const targetBase = baseVerts[ry]?.[rx];
+      if (targetBase) {
+        state.mergedTo.set(draggingKey, targetRoot);
+        state.vertexOffsets.set(targetRoot, { dx: mergeCandidate.x - targetBase.x, dy: mergeCandidate.y - targetBase.y });
+        state.vertexOffsets.delete(draggingKey);
+        const upDist = Math.hypot(targetX - mergeCandidate.x, targetY - mergeCandidate.y);
+        const autoAdded = [];
+        if (upDist <= mergeRadius) {
+          const cellKeys = getCellKeysFromPosition(mergeCandidate.x, mergeCandidate.y, layout);
+          for (const cellKey of cellKeys) {
+            if (!state.filledSquares.has(cellKey)) {
+              state.filledSquares.add(cellKey);
+              autoAdded.push(cellKey);
+            }
+          }
+        }
+        return { merged: true, autoAdded, targetKey: targetRoot, snapped: mergeCandidate };
+      }
+    }
+  }
+  return { merged: false, autoAdded: [], targetKey: null, snapped };
 }
 function getCellKeysFromPosition(x, y, layout) {
   const { cols, rows, pad, innerW, innerH, cellW, cellH } = layout;
@@ -281,14 +376,21 @@ function renderGridSvg(svg, state, params, layout) {
     return el;
   };
   const facesGroup = svgEl("g", { "data-layer": "faces" });
+  const extraFacesGroup = svgEl("g", { "data-layer": "extra-faces" });
   const edgesGroup = svgEl("g", { "data-layer": "edges" });
   const dotsGroup = svgEl("g", { "data-layer": "dots" });
   const verticesGroup = svgEl("g", { "data-layer": "vertices" });
+  const extraVerticesGroup = svgEl("g", { "data-layer": "extra-vertices" });
   svg.appendChild(facesGroup);
+  svg.appendChild(extraFacesGroup);
   svg.appendChild(edgesGroup);
   svg.appendChild(dotsGroup);
   svg.appendChild(verticesGroup);
+  svg.appendChild(extraVerticesGroup);
   for (const key of state.filledSquares) {
+    if (state.hiddenFaces && state.hiddenFaces.has(key)) {
+      continue;
+    }
     const [cx, cy] = key.split(",").map((v) => Number(v));
     if (Number.isNaN(cx) || Number.isNaN(cy)) {
       continue;
@@ -327,6 +429,33 @@ function renderGridSvg(svg, state, params, layout) {
       })
     );
   }
+  if (state.extraFaces && state.extraFaces.length > 0) {
+    for (const face of state.extraFaces) {
+      const points = [];
+      for (const key of face.vertexKeys || []) {
+        const [vx, vy] = key.split(",").map((v2) => Number(v2));
+        const v = baseVerts[vy]?.[vx];
+        if (!v) {
+          continue;
+        }
+        points.push(`${v.x},${v.y}`);
+      }
+      if (points.length < 3) {
+        continue;
+      }
+      extraFacesGroup.appendChild(
+        svgEl("polygon", {
+          points: points.join(" "),
+          fill: params.fillColor,
+          "fill-opacity": "0.25",
+          stroke: params.edgeColor,
+          "stroke-width": Math.max(1, Math.floor(params.edgeThickness / 2)),
+          "data-type": "extra-face",
+          "data-face": face.id ?? ""
+        })
+      );
+    }
+  }
   const boundaryVertexKeys = getBoundaryVertexKeys(state, layout);
   for (const key of state.filledSquares) {
     const [cx, cy] = key.split(",").map((v) => Number(v));
@@ -344,63 +473,103 @@ function renderGridSvg(svg, state, params, layout) {
     const rightKey = `${cx + 1},${cy}`;
     const upKey = `${cx},${cy - 1}`;
     const downKey = `${cx},${cy + 1}`;
+    const leftEdgeKey = `${key}|left`;
+    const rightEdgeKey = `${key}|right`;
+    const topEdgeKey = `${key}|top`;
+    const bottomEdgeKey = `${key}|bottom`;
     if (cx === 0 || !state.filledSquares.has(leftKey)) {
-      edgesGroup.appendChild(
-        svgEl("line", {
-          x1: v00.x,
-          y1: v00.y,
-          x2: v01.x,
-          y2: v01.y,
-          stroke: params.edgeColor,
-          "stroke-width": params.edgeThickness,
-          "data-type": "edge",
-          "data-edge": "left",
-          "data-cell": key
-        })
-      );
+      if (!state.hiddenEdges || !state.hiddenEdges.has(leftEdgeKey)) {
+        edgesGroup.appendChild(
+          svgEl("line", {
+            x1: v00.x,
+            y1: v00.y,
+            x2: v01.x,
+            y2: v01.y,
+            stroke: params.edgeColor,
+            "stroke-width": params.edgeThickness,
+            "data-type": "edge",
+            "data-edge": "left",
+            "data-cell": key
+          })
+        );
+      }
     }
     if (cx === cols - 2 || !state.filledSquares.has(rightKey)) {
-      edgesGroup.appendChild(
-        svgEl("line", {
-          x1: v10.x,
-          y1: v10.y,
-          x2: v11.x,
-          y2: v11.y,
-          stroke: params.edgeColor,
-          "stroke-width": params.edgeThickness,
-          "data-type": "edge",
-          "data-edge": "right",
-          "data-cell": key
-        })
-      );
+      if (!state.hiddenEdges || !state.hiddenEdges.has(rightEdgeKey)) {
+        edgesGroup.appendChild(
+          svgEl("line", {
+            x1: v10.x,
+            y1: v10.y,
+            x2: v11.x,
+            y2: v11.y,
+            stroke: params.edgeColor,
+            "stroke-width": params.edgeThickness,
+            "data-type": "edge",
+            "data-edge": "right",
+            "data-cell": key
+          })
+        );
+      }
     }
     if (cy === 0 || !state.filledSquares.has(upKey)) {
-      edgesGroup.appendChild(
-        svgEl("line", {
-          x1: v00.x,
-          y1: v00.y,
-          x2: v10.x,
-          y2: v10.y,
-          stroke: params.edgeColor,
-          "stroke-width": params.edgeThickness,
-          "data-type": "edge",
-          "data-edge": "top",
-          "data-cell": key
-        })
-      );
+      if (!state.hiddenEdges || !state.hiddenEdges.has(topEdgeKey)) {
+        edgesGroup.appendChild(
+          svgEl("line", {
+            x1: v00.x,
+            y1: v00.y,
+            x2: v10.x,
+            y2: v10.y,
+            stroke: params.edgeColor,
+            "stroke-width": params.edgeThickness,
+            "data-type": "edge",
+            "data-edge": "top",
+            "data-cell": key
+          })
+        );
+      }
     }
     if (cy === rows - 2 || !state.filledSquares.has(downKey)) {
+      if (!state.hiddenEdges || !state.hiddenEdges.has(bottomEdgeKey)) {
+        edgesGroup.appendChild(
+          svgEl("line", {
+            x1: v01.x,
+            y1: v01.y,
+            x2: v11.x,
+            y2: v11.y,
+            stroke: params.edgeColor,
+            "stroke-width": params.edgeThickness,
+            "data-type": "edge",
+            "data-edge": "bottom",
+            "data-cell": key
+          })
+        );
+      }
+    }
+  }
+  if (state.extraEdges && state.extraEdges.size > 0) {
+    for (const edgeKey of state.extraEdges) {
+      const parts = edgeKey.split("|");
+      if (parts.length !== 2) {
+        continue;
+      }
+      const [a, b] = parts;
+      const [ax, ay] = a.split(",").map((v) => Number(v));
+      const [bx, by] = b.split(",").map((v) => Number(v));
+      const va = baseVerts[ay]?.[ax];
+      const vb = baseVerts[by]?.[bx];
+      if (!va || !vb) {
+        continue;
+      }
       edgesGroup.appendChild(
         svgEl("line", {
-          x1: v01.x,
-          y1: v01.y,
-          x2: v11.x,
-          y2: v11.y,
+          x1: va.x,
+          y1: va.y,
+          x2: vb.x,
+          y2: vb.y,
           stroke: params.edgeColor,
           "stroke-width": params.edgeThickness,
-          "data-type": "edge",
-          "data-edge": "bottom",
-          "data-cell": key
+          "data-type": "extra-edge",
+          "data-edge": edgeKey
         })
       );
     }
@@ -427,6 +596,9 @@ function renderGridSvg(svg, state, params, layout) {
     const drawnPositions = /* @__PURE__ */ new Set();
     const vertexRadius = Math.max(2, Math.floor(params.edgeThickness));
     for (const vKey of boundaryVertexKeys) {
+      if (state.hiddenVertices && state.hiddenVertices.has(vKey)) {
+        continue;
+      }
       const [vx, vy] = vKey.split(",").map((v2) => Number(v2));
       const v = verts[vy]?.[vx];
       if (!v) {
@@ -449,6 +621,26 @@ function renderGridSvg(svg, state, params, layout) {
       );
     }
   }
+  if (state.extraVertices && state.extraVertices.size > 0) {
+    const extraRadius = Math.max(2, Math.floor(params.edgeThickness) + 1);
+    for (const key of state.extraVertices) {
+      const [vx, vy] = key.split(",").map((v2) => Number(v2));
+      const v = baseVerts[vy]?.[vx];
+      if (!v) {
+        continue;
+      }
+      extraVerticesGroup.appendChild(
+        svgEl("circle", {
+          cx: v.x,
+          cy: v.y,
+          r: extraRadius,
+          fill: params.edgeColor,
+          "data-type": "extra-vertex",
+          "data-vertex": `${vx},${vy}`
+        })
+      );
+    }
+  }
   return boundaryVertexKeys;
 }
 
@@ -461,7 +653,8 @@ async function initHandGridtypo1() {
   const debugEl = document.getElementById("debug");
   const cellDebugEl = document.getElementById("cell_debug");
   const guiHost = document.getElementById("gui");
-  const params = { ...defaultParams };
+  const toolHost = document.getElementById("tool");
+  const params = { ...defaultParams, tool: "basic" };
   const STORAGE_KEY = "hand-gridtypo1-lilgui";
   const state = createState();
   const cellLogLines = [];
@@ -477,9 +670,11 @@ async function initHandGridtypo1() {
     cellLogLines.unshift(`[${time}] ${message}`);
     renderCellDebug();
   }
-  function renderCellDebug() {
-    const filledList = Array.from(state.filledSquares.values()).sort();
-    const vertexList = Array.from(lastBoundaryVertexKeys.values()).sort();
+  function renderCellDebug(renderedCellsOverride = null) {
+    const hiddenFaces = state.hiddenFaces ? state.hiddenFaces : /* @__PURE__ */ new Set();
+    const hiddenVertices = state.hiddenVertices ? state.hiddenVertices : /* @__PURE__ */ new Set();
+    const hiddenEdges = state.hiddenEdges ? state.hiddenEdges : /* @__PURE__ */ new Set();
+    const filledList = Array.from(state.filledSquares.values()).filter((key) => !hiddenFaces.has(key)).sort();
     const movedList = [];
     for (const [key, offset] of state.vertexOffsets.entries()) {
       movedList.push(`${key} dx=${offset.dx.toFixed(2)} dy=${offset.dy.toFixed(2)}`);
@@ -490,11 +685,75 @@ async function initHandGridtypo1() {
       mergedList.push(`${key} -> ${target}`);
     }
     mergedList.sort();
+    const extraList = state.extraVertices ? Array.from(state.extraVertices.values()).sort() : [];
+    const extraEdgeList = state.extraEdges ? Array.from(state.extraEdges.values()).sort() : [];
+    const faceList = state.extraFaces ? state.extraFaces.map((face) => face.id || "face") : [];
+    let boundaryEdgeList = [];
+    let vertexList = [];
+    if (lastLayout) {
+      const boundaryEdgeSet = /* @__PURE__ */ new Set();
+      for (const key of state.filledSquares) {
+        if (hiddenFaces.has(key)) {
+          continue;
+        }
+        const [cx, cy] = key.split(",").map((v) => Number(v));
+        if (Number.isNaN(cx) || Number.isNaN(cy)) {
+          continue;
+        }
+        const leftCell = `${cx - 1},${cy}`;
+        const rightCell = `${cx + 1},${cy}`;
+        const upCell = `${cx},${cy - 1}`;
+        const downCell = `${cx},${cy + 1}`;
+        const leftKey = `${key}|left`;
+        const rightKey = `${key}|right`;
+        const topKey = `${key}|top`;
+        const bottomKey = `${key}|bottom`;
+        if ((cx === 0 || !state.filledSquares.has(leftCell)) && !hiddenEdges.has(leftKey)) {
+          boundaryEdgeSet.add(`(${cx},${cy},${cx},${cy + 1})`);
+        }
+        if ((cx === lastLayout.cols - 2 || !state.filledSquares.has(rightCell)) && !hiddenEdges.has(rightKey)) {
+          boundaryEdgeSet.add(`(${cx + 1},${cy},${cx + 1},${cy + 1})`);
+        }
+        if ((cy === 0 || !state.filledSquares.has(upCell)) && !hiddenEdges.has(topKey)) {
+          boundaryEdgeSet.add(`(${cx},${cy},${cx + 1},${cy})`);
+        }
+        if ((cy === lastLayout.rows - 2 || !state.filledSquares.has(downCell)) && !hiddenEdges.has(bottomKey)) {
+          boundaryEdgeSet.add(`(${cx},${cy + 1},${cx + 1},${cy + 1})`);
+        }
+      }
+      boundaryEdgeList = Array.from(boundaryEdgeSet).sort();
+      const boundaryVertexSet = /* @__PURE__ */ new Set();
+      for (const edge of boundaryEdgeList) {
+        const match = edge.match(/^\((\-?\d+),(\-?\d+),(\-?\d+),(\-?\d+)\)$/);
+        if (!match) {
+          continue;
+        }
+        const ax = Number(match[1]);
+        const ay = Number(match[2]);
+        const bx = Number(match[3]);
+        const by = Number(match[4]);
+        const aKey = `${ax},${ay}`;
+        const bKey = `${bx},${by}`;
+        if (!hiddenVertices.has(aKey)) {
+          boundaryVertexSet.add(aKey);
+        }
+        if (!hiddenVertices.has(bKey)) {
+          boundaryVertexSet.add(bKey);
+        }
+      }
+      vertexList = Array.from(boundaryVertexSet).sort();
+    }
+    const renderedCells = typeof renderedCellsOverride === "number" ? renderedCellsOverride : svg ? svg.querySelectorAll('[data-type="face"]').length : 0;
     const summary = [
       `Filled cells (${filledList.length}): ${filledList.join(" ") || "-"}`,
       `Boundary vertices (${vertexList.length}): ${vertexList.join(" ") || "-"}`,
+      `Boundary edges (${boundaryEdgeList.length}): ${boundaryEdgeList.join(" ") || "-"}`,
       `Moved vertices (${movedList.length}): ${movedList.join(" | ") || "-"}`,
-      `Merged vertices (${mergedList.length}): ${mergedList.join(" | ") || "-"}`
+      `Merged vertices (${mergedList.length}): ${mergedList.join(" | ") || "-"}`,
+      `Extra vertices (${extraList.length}): ${extraList.join(" ") || "-"}`,
+      `Extra edges (${extraEdgeList.length}): ${extraEdgeList.join(" ") || "-"}`,
+      `Extra faces (${faceList.length}): ${faceList.join(" ") || "-"}`,
+      `Rendered cells (${renderedCells}): ${renderedCells === 0 ? "-" : renderedCells}`
     ].join("\n");
     cellDebugEl.textContent = `${summary}
 
@@ -527,10 +786,24 @@ ${cellLogLines.join("\n")}`.trim();
     const boundaryVertexKeys = renderGridSvg(svg, state, params, lastLayout);
     lastBoundaryVertexKeys = new Set(boundaryVertexKeys);
     if (!draggingVertexKey) {
-      renderCellDebug();
+      const renderedCells = svg.querySelectorAll('[data-type="face"]').length;
+      renderCellDebug(renderedCells);
     }
   }
   const gui = new GUI({ container: guiHost, title: "Grid" });
+  const toolOptions = {
+    Basic: "basic",
+    "Add Vertex": "addVertex",
+    "Delete Vertex": "deleteVertex",
+    "Add Edge": "addEdge",
+    "Delete Edge": "deleteEdge",
+    "Add Face": "addFace",
+    "Delete Face": "deleteFace"
+  };
+  const toolController = gui.add(params, "tool", toolOptions).name("tool").onChange(() => {
+    resetToolState();
+    syncToolButtons();
+  });
   gui.add(params, "cols", 1, 50, 1).name("n(\u6A2A)").onChange(drawGrid);
   gui.add(params, "rows", 1, 50, 1).name("n(\u7E26)").onChange(drawGrid);
   gui.add(params, "dotRadius", 1, 10, 1).name("dotRadius").onChange(drawGrid);
@@ -589,6 +862,35 @@ ${cellLogLines.join("\n")}`.trim();
   gui.add(io, "load").name("load preset");
   gui.add(io, "reset").name("reset");
   gui.add(io, "copy").name("copy preset");
+  function syncToolButtons() {
+    if (!toolHost) {
+      return;
+    }
+    const buttons = toolHost.querySelectorAll("[data-tool]");
+    buttons.forEach((button) => {
+      const tool = button.getAttribute("data-tool");
+      if (tool === params.tool) {
+        button.classList.add("active");
+      } else {
+        button.classList.remove("active");
+      }
+    });
+  }
+  if (toolHost) {
+    toolHost.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+      const tool = target.getAttribute("data-tool");
+      if (!tool) {
+        return;
+      }
+      params.tool = tool;
+      toolController.setValue(tool);
+      syncToolButtons();
+    });
+  }
   function cellFromPoint(x, y) {
     const width = svg.getBoundingClientRect().width;
     const height = svg.getBoundingClientRect().width;
@@ -678,6 +980,13 @@ ${cellLogLines.join("\n")}`.trim();
   let dragStartOffset = null;
   let dragLastOffset = null;
   let pendingDraw = false;
+  let pendingEdgeStart = null;
+  let faceIdCounter = 1;
+  const pendingFaceEdges = /* @__PURE__ */ new Set();
+  function resetToolState() {
+    pendingEdgeStart = null;
+    pendingFaceEdges.clear();
+  }
   function scheduleDraw() {
     if (pendingDraw) {
       return;
@@ -797,6 +1106,301 @@ ${cellLogLines.join("\n")}`.trim();
     }
     return best ? { ...best, key: bestKey, source: bestSource, dist: bestDist } : { x, y, key: null, source: null, dist: Infinity };
   }
+  function findNearestGridVertex(x, y) {
+    if (!lastLayout) {
+      return null;
+    }
+    const { cols, rows, baseVerts } = lastLayout;
+    let best = null;
+    let bestDist = params.magnetRadius;
+    for (let vy = 0; vy < rows; vy += 1) {
+      for (let vx = 0; vx < cols; vx += 1) {
+        const base = baseVerts[vy][vx];
+        const dx = base.x - x;
+        const dy = base.y - y;
+        const dist = Math.hypot(dx, dy);
+        if (dist <= bestDist) {
+          bestDist = dist;
+          best = { x: vx, y: vy, dist };
+        }
+      }
+    }
+    return best;
+  }
+  function normalizeEdgeKey(a, b) {
+    if (a === b) {
+      return null;
+    }
+    return a < b ? `${a}|${b}` : `${b}|${a}`;
+  }
+  function getEdgeEndpoints(edgeKey) {
+    const parts = edgeKey.split("|");
+    if (parts.length !== 2) {
+      return null;
+    }
+    return parts;
+  }
+  function updateExtraVertexPresence(key) {
+    const refs = state.extraVertexRefs.get(key) || 0;
+    const explicit = state.explicitVertices.has(key);
+    if (refs > 0 || explicit) {
+      state.extraVertices.add(key);
+    } else {
+      state.extraVertices.delete(key);
+    }
+  }
+  function addVertexRef(key, delta) {
+    const prev = state.extraVertexRefs.get(key) || 0;
+    const next = Math.max(0, prev + delta);
+    if (next === 0) {
+      state.extraVertexRefs.delete(key);
+    } else {
+      state.extraVertexRefs.set(key, next);
+    }
+    updateExtraVertexPresence(key);
+  }
+  function toggleExplicitVertex(vx, vy) {
+    const key = `${vx},${vy}`;
+    if (state.explicitVertices.has(key)) {
+      state.explicitVertices.delete(key);
+      updateExtraVertexPresence(key);
+      logCell(`Extra vertex removed: ${key}`);
+      return;
+    }
+    state.explicitVertices.add(key);
+    updateExtraVertexPresence(key);
+    logCell(`Extra vertex added: ${key}`);
+  }
+  function addEdge(edgeKey) {
+    if (state.extraEdges.has(edgeKey)) {
+      return;
+    }
+    state.extraEdges.add(edgeKey);
+    const endpoints = getEdgeEndpoints(edgeKey);
+    if (endpoints) {
+      endpoints.forEach((key) => addVertexRef(key, 1));
+    }
+    logCell(`Extra edge added: ${edgeKey}`);
+  }
+  function removeFace(face) {
+    if (!face) {
+      return;
+    }
+    for (const key of face.vertexKeys || []) {
+      addVertexRef(key, -1);
+    }
+    state.extraFaces = state.extraFaces.filter((item) => item !== face);
+    logCell(`Extra face removed: ${face.id ?? "face"}`);
+  }
+  function removeEdge(edgeKey) {
+    if (!state.extraEdges.has(edgeKey)) {
+      return;
+    }
+    state.extraEdges.delete(edgeKey);
+    const endpoints = getEdgeEndpoints(edgeKey);
+    if (endpoints) {
+      endpoints.forEach((key) => addVertexRef(key, -1));
+    }
+    const facesToRemove = state.extraFaces.filter(
+      (face) => (face.edgeKeys || []).includes(edgeKey)
+    );
+    facesToRemove.forEach(removeFace);
+    logCell(`Extra edge removed: ${edgeKey}`);
+  }
+  function removeVertexCompletely(vertexKey) {
+    const edgesToRemove = Array.from(state.extraEdges).filter((edgeKey) => {
+      const endpoints = getEdgeEndpoints(edgeKey);
+      return endpoints ? endpoints.includes(vertexKey) : false;
+    });
+    edgesToRemove.forEach(removeEdge);
+    const facesToRemove = state.extraFaces.filter(
+      (face) => (face.vertexKeys || []).includes(vertexKey)
+    );
+    facesToRemove.forEach(removeFace);
+    state.explicitVertices.delete(vertexKey);
+    state.extraVertexRefs.delete(vertexKey);
+    state.extraVertices.delete(vertexKey);
+    logCell(`Extra vertex removed: ${vertexKey}`);
+  }
+  function distanceToSegment(px, py, x1, y1, x2, y2) {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const len2 = dx * dx + dy * dy;
+    if (len2 === 0) {
+      return Math.hypot(px - x1, py - y1);
+    }
+    let t = ((px - x1) * dx + (py - y1) * dy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    const sx = x1 + t * dx;
+    const sy = y1 + t * dy;
+    return Math.hypot(px - sx, py - sy);
+  }
+  function findNearestExtraEdge(x, y, maxDist = params.magnetRadius) {
+    if (!lastLayout || !state.extraEdges.size) {
+      return null;
+    }
+    const { baseVerts } = lastLayout;
+    let bestKey = null;
+    let bestDist = maxDist;
+    for (const edgeKey of state.extraEdges) {
+      const endpoints = getEdgeEndpoints(edgeKey);
+      if (!endpoints) {
+        continue;
+      }
+      const [a, b] = endpoints;
+      const [ax, ay] = a.split(",").map((v) => Number(v));
+      const [bx, by] = b.split(",").map((v) => Number(v));
+      const va = baseVerts[ay]?.[ax];
+      const vb = baseVerts[by]?.[bx];
+      if (!va || !vb) {
+        continue;
+      }
+      const dist = distanceToSegment(x, y, va.x, va.y, vb.x, vb.y);
+      if (dist <= bestDist) {
+        bestDist = dist;
+        bestKey = edgeKey;
+      }
+    }
+    return bestKey;
+  }
+  function findNearestBoundaryEdge(x, y, maxDist = params.magnetRadius) {
+    if (!lastLayout || state.filledSquares.size === 0) {
+      return null;
+    }
+    const { cols, rows, verts } = lastLayout;
+    let best = null;
+    let bestDist = maxDist;
+    for (const key of state.filledSquares) {
+      const [cx, cy] = key.split(",").map((v) => Number(v));
+      if (Number.isNaN(cx) || Number.isNaN(cy)) {
+        continue;
+      }
+      const v00 = verts[cy]?.[cx];
+      const v10 = verts[cy]?.[cx + 1];
+      const v11 = verts[cy + 1]?.[cx + 1];
+      const v01 = verts[cy + 1]?.[cx];
+      if (!v00 || !v10 || !v11 || !v01) {
+        continue;
+      }
+      const leftKey = `${cx - 1},${cy}`;
+      const rightKey = `${cx + 1},${cy}`;
+      const upKey = `${cx},${cy - 1}`;
+      const downKey = `${cx},${cy + 1}`;
+      if (cx === 0 || !state.filledSquares.has(leftKey)) {
+        const dist = distanceToSegment(x, y, v00.x, v00.y, v01.x, v01.y);
+        if (dist <= bestDist) {
+          bestDist = dist;
+          best = { cellKey: key, edge: "left", edgeKey: `${key}|left` };
+        }
+      }
+      if (cx === cols - 2 || !state.filledSquares.has(rightKey)) {
+        const dist = distanceToSegment(x, y, v10.x, v10.y, v11.x, v11.y);
+        if (dist <= bestDist) {
+          bestDist = dist;
+          best = { cellKey: key, edge: "right", edgeKey: `${key}|right` };
+        }
+      }
+      if (cy === 0 || !state.filledSquares.has(upKey)) {
+        const dist = distanceToSegment(x, y, v00.x, v00.y, v10.x, v10.y);
+        if (dist <= bestDist) {
+          bestDist = dist;
+          best = { cellKey: key, edge: "top", edgeKey: `${key}|top` };
+        }
+      }
+      if (cy === rows - 2 || !state.filledSquares.has(downKey)) {
+        const dist = distanceToSegment(x, y, v01.x, v01.y, v11.x, v11.y);
+        if (dist <= bestDist) {
+          bestDist = dist;
+          best = { cellKey: key, edge: "bottom", edgeKey: `${key}|bottom` };
+        }
+      }
+    }
+    return best;
+  }
+  function buildFaceFromEdges(edgeKeys) {
+    if (!lastLayout) {
+      return null;
+    }
+    const vertexMap = /* @__PURE__ */ new Map();
+    for (const edgeKey of edgeKeys) {
+      const endpoints = getEdgeEndpoints(edgeKey);
+      if (!endpoints) {
+        continue;
+      }
+      endpoints.forEach((key) => {
+        if (vertexMap.has(key)) {
+          return;
+        }
+        const [vx, vy] = key.split(",").map((v2) => Number(v2));
+        const v = lastLayout.baseVerts[vy]?.[vx];
+        if (v) {
+          vertexMap.set(key, v);
+        }
+      });
+    }
+    if (vertexMap.size < 3) {
+      return null;
+    }
+    const vertices = Array.from(vertexMap.entries()).map(([key, v]) => ({ key, x: v.x, y: v.y }));
+    const cx = vertices.reduce((sum, v) => sum + v.x, 0) / vertices.length;
+    const cy = vertices.reduce((sum, v) => sum + v.y, 0) / vertices.length;
+    vertices.sort((a, b) => Math.atan2(a.y - cy, a.x - cx) - Math.atan2(b.y - cy, b.x - cx));
+    return vertices.map((v) => v.key);
+  }
+  function pointInPolygon(pointX, pointY, vertices) {
+    let inside = false;
+    for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
+      const xi = vertices[i].x;
+      const yi = vertices[i].y;
+      const xj = vertices[j].x;
+      const yj = vertices[j].y;
+      const intersect = yi > pointY !== yj > pointY && pointX < (xj - xi) * (pointY - yi) / (yj - yi) + xi;
+      if (intersect) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+  function findFaceAtPoint(x, y) {
+    if (!lastLayout || !state.extraFaces.length) {
+      return null;
+    }
+    for (const face of state.extraFaces) {
+      const points = [];
+      for (const key of face.vertexKeys || []) {
+        const [vx, vy] = key.split(",").map((v2) => Number(v2));
+        const v = lastLayout.baseVerts[vy]?.[vx];
+        if (v) {
+          points.push(v);
+        }
+      }
+      if (points.length >= 3 && pointInPolygon(x, y, points)) {
+        return face;
+      }
+    }
+    return null;
+  }
+  function getAdjacentCellsForVertex(vx, vy) {
+    if (!lastLayout) {
+      return [];
+    }
+    const maxX = Math.max(0, lastLayout.cols - 2);
+    const maxY = Math.max(0, lastLayout.rows - 2);
+    const candidates = [
+      { cx: vx - 1, cy: vy - 1 },
+      { cx: vx, cy: vy - 1 },
+      { cx: vx - 1, cy: vy },
+      { cx: vx, cy: vy }
+    ];
+    const keys = [];
+    for (const { cx, cy } of candidates) {
+      if (cx < 0 || cy < 0 || cx > maxX || cy > maxY) {
+        continue;
+      }
+      keys.push(`${cx},${cy}`);
+    }
+    return keys;
+  }
   svg.addEventListener("contextmenu", (event) => {
     event.preventDefault();
   });
@@ -805,6 +1409,173 @@ ${cellLogLines.join("\n")}`.trim();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
     if (event.button === 0) {
+      if (params.tool === "addVertex") {
+        if (!lastLayout) {
+          buildLayout2();
+        }
+        const nearest2 = findNearestGridVertex(x, y);
+        if (nearest2) {
+          toggleExplicitVertex(nearest2.x, nearest2.y);
+          scheduleDraw();
+        }
+        return;
+      }
+      if (params.tool === "deleteVertex") {
+        if (!lastLayout) {
+          buildLayout2();
+        }
+        const nearest2 = findNearestGridVertex(x, y);
+        if (nearest2) {
+          const key2 = `${nearest2.x},${nearest2.y}`;
+          if (state.extraVertices.has(key2)) {
+            removeVertexCompletely(key2);
+            scheduleDraw();
+            return;
+          }
+          const boundaryKeys = getBoundaryVertexKeys(state, lastLayout);
+          if (boundaryKeys.has(key2)) {
+            if (state.hiddenVertices.has(key2)) {
+              state.hiddenVertices.delete(key2);
+              logCell(`Hidden vertex restored: ${key2}`);
+            } else {
+              state.hiddenVertices.add(key2);
+              logCell(`Hidden vertex added: ${key2}`);
+            }
+            scheduleDraw();
+          }
+        }
+        return;
+      }
+      if (params.tool === "addEdge") {
+        if (!lastLayout) {
+          buildLayout2();
+        }
+        const nearest2 = findNearestGridVertex(x, y);
+        if (!nearest2) {
+          return;
+        }
+        const key2 = `${nearest2.x},${nearest2.y}`;
+        if (!pendingEdgeStart) {
+          pendingEdgeStart = key2;
+          logCell(`Edge start: ${key2}`);
+          return;
+        }
+        const edgeKey = normalizeEdgeKey(pendingEdgeStart, key2);
+        pendingEdgeStart = null;
+        if (!edgeKey) {
+          return;
+        }
+        if (state.extraEdges.has(edgeKey)) {
+          removeEdge(edgeKey);
+        } else {
+          addEdge(edgeKey);
+        }
+        scheduleDraw();
+        return;
+      }
+      if (params.tool === "deleteEdge") {
+        if (!lastLayout) {
+          buildLayout2();
+        }
+        const targetEl = event.target instanceof Element ? event.target : null;
+        const edgeEl = targetEl ? targetEl.closest('[data-type="edge"], [data-type="extra-edge"]') : null;
+        if (edgeEl) {
+          const type = edgeEl.getAttribute("data-type");
+          if (type === "extra-edge") {
+            const edgeKey2 = edgeEl.getAttribute("data-edge");
+            if (edgeKey2) {
+              removeEdge(edgeKey2);
+              scheduleDraw();
+              return;
+            }
+          }
+          if (type === "edge") {
+            const cellKey = edgeEl.getAttribute("data-cell");
+            const edgeDir = edgeEl.getAttribute("data-edge");
+            if (cellKey && edgeDir) {
+              const boundaryKey = `${cellKey}|${edgeDir}`;
+              if (!state.hiddenEdges.has(boundaryKey)) {
+                state.hiddenEdges.add(boundaryKey);
+                logCell(`Hidden edge added: ${boundaryKey}`);
+                scheduleDraw();
+                return;
+              }
+            }
+          }
+        }
+        const edgeKey = findNearestExtraEdge(x, y, Number.POSITIVE_INFINITY);
+        if (edgeKey) {
+          removeEdge(edgeKey);
+          scheduleDraw();
+          return;
+        }
+        const boundary = findNearestBoundaryEdge(x, y, Number.POSITIVE_INFINITY);
+        if (boundary && boundary.edgeKey) {
+          if (!state.hiddenEdges.has(boundary.edgeKey)) {
+            state.hiddenEdges.add(boundary.edgeKey);
+            logCell(`Hidden edge added: ${boundary.edgeKey}`);
+            scheduleDraw();
+          }
+        }
+        return;
+      }
+      if (params.tool === "addFace") {
+        if (!lastLayout) {
+          buildLayout2();
+        }
+        const edgeKey = findNearestExtraEdge(x, y);
+        if (!edgeKey) {
+          return;
+        }
+        if (pendingFaceEdges.has(edgeKey)) {
+          pendingFaceEdges.delete(edgeKey);
+          logCell(`Face edge removed: ${edgeKey}`);
+          return;
+        }
+        pendingFaceEdges.add(edgeKey);
+        logCell(`Face edge added: ${edgeKey}`);
+        if (pendingFaceEdges.size >= 3) {
+          const vertexKeys = buildFaceFromEdges(pendingFaceEdges);
+          if (vertexKeys) {
+            const face = {
+              id: `face-${faceIdCounter++}`,
+              edgeKeys: Array.from(pendingFaceEdges),
+              vertexKeys
+            };
+            state.extraFaces.push(face);
+            vertexKeys.forEach((key2) => addVertexRef(key2, 1));
+            logCell(`Extra face added: ${face.id}`);
+            pendingFaceEdges.clear();
+            scheduleDraw();
+          }
+        }
+        return;
+      }
+      if (params.tool === "deleteFace") {
+        if (!lastLayout) {
+          buildLayout2();
+        }
+        const face = findFaceAtPoint(x, y);
+        if (face) {
+          const edgeKeys = Array.from(face.edgeKeys || []);
+          removeFace(face);
+          edgeKeys.forEach(removeEdge);
+          scheduleDraw();
+          return;
+        }
+        const cellKey = keyFromPoint(x, y);
+        if (cellKey && state.filledSquares.has(cellKey)) {
+          if (state.hiddenFaces.has(cellKey)) {
+            state.hiddenFaces.delete(cellKey);
+            logCell(`Hidden face restored: ${cellKey}`);
+          } else {
+            state.hiddenFaces.add(cellKey);
+            logCell(`Hidden face added: ${cellKey}`);
+          }
+          scheduleDraw();
+        }
+        return;
+      }
       const key = keyFromPoint(x, y);
       const nearest = findNearestVertex(x, y);
       if (nearest) {
@@ -904,37 +1675,31 @@ ${cellLogLines.join("\n")}`.trim();
       if (lastLayout && dragLastOffset) {
         const [vx, vy] = draggingVertexKey.split(",").map((v) => Number(v));
         const base = lastLayout.baseVerts[vy]?.[vx];
-        if (base) {
-          const current = { x: base.x + dragLastOffset.dx, y: base.y + dragLastOffset.dy };
-          const snapped = snapToMerge(current.x, current.y, draggingVertexKey);
-          if (snapped.key && snapped.key !== draggingVertexKey && snapped.source === "moved") {
-            const targetRoot = getRootVertex(state, snapped.key);
-            if (targetRoot && targetRoot !== draggingVertexKey) {
-              const targetBase = lastLayout.baseVerts[Number(targetRoot.split(",")[1])]?.[Number(targetRoot.split(",")[0])];
-              if (targetBase) {
-                state.mergedTo.set(draggingVertexKey, targetRoot);
-                state.vertexOffsets.set(targetRoot, { dx: snapped.x - targetBase.x, dy: snapped.y - targetBase.y });
-                state.vertexOffsets.delete(draggingVertexKey);
-                logCell(`Vertex merged: ${draggingVertexKey} -> ${targetRoot} source=${snapped.source} dist=${snapped.dist.toFixed(2)}`);
-                const upDist = Math.hypot(upX - snapped.x, upY - snapped.y);
-                if (upDist <= params.mergeRadius) {
-                  const cellKeys = getCellKeysFromPosition2(snapped.x, snapped.y, lastLayout);
-                  for (const cellKey of cellKeys) {
-                    if (!state.filledSquares.has(cellKey)) {
-                      state.filledSquares.add(cellKey);
-                      logCell(`Cell auto-added: ${cellKey}`);
-                    }
-                  }
-                }
-              }
-            } else {
-              state.mergedTo.delete(draggingVertexKey);
-              state.vertexOffsets.set(draggingVertexKey, { dx: snapped.x - base.x, dy: snapped.y - base.y });
-            }
-          } else {
-            state.mergedTo.delete(draggingVertexKey);
-            state.vertexOffsets.set(draggingVertexKey, { dx: snapped.x - base.x, dy: snapped.y - base.y });
-          }
+        const dragX = base ? base.x + dragLastOffset.dx : upX;
+        const dragY = base ? base.y + dragLastOffset.dy : upY;
+        const result = applyVertexDragRelease(
+          state,
+          lastLayout,
+          draggingVertexKey,
+          dragX,
+          dragY,
+          { magnetRadius: params.magnetRadius, mergeRadius: params.mergeRadius }
+        );
+        logCell(
+          `Drag release: ${draggingVertexKey} up=(${upX.toFixed(2)},${upY.toFixed(2)}) drag=(${dragX.toFixed(2)},${dragY.toFixed(2)}) merged=${result.merged} autoAdded=${result.autoAdded.length}`
+        );
+        if (result.snapped) {
+          logCell(
+            `Drag snapped: (${result.snapped.x.toFixed(2)},${result.snapped.y.toFixed(2)}) key=${result.snapped.key ?? "-"} source=${result.snapped.source ?? "-"} dist=${result.snapped.dist?.toFixed(2) ?? "-"}`
+          );
+        }
+        if (result.merged && result.targetKey) {
+          logCell(`Vertex merged: ${draggingVertexKey} -> ${result.targetKey}`);
+        }
+        if (result.autoAdded && result.autoAdded.length) {
+          result.autoAdded.forEach((cellKey) => {
+            logCell(`Cell auto-added: ${cellKey}`);
+          });
         }
       }
       draggingVertexKey = null;
@@ -952,6 +1717,7 @@ ${cellLogLines.join("\n")}`.trim();
     dragLastOffset = null;
   });
   window.addEventListener("resize", drawGrid);
+  syncToolButtons();
   setStatus("Ready");
   drawGrid();
 }

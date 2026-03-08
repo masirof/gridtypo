@@ -88,6 +88,14 @@ fillsize1のときは、各点を頂点として1マス塗りたい
   - 頂点追加ツール
   - 辺を曲げるツール
 
+## ファイル構成
+- hand_gridtypo1.html → hand_gridtypo1.ts
+- hand_gridtypo1.ts → ,hand_gridtypo_view.ts / hand_gridtypo_core.ts
+
+- coreは純粋ロジック
+- viewはsvg出力のみ
+- appはuiイベント
+
 ## ビルド
 ts→esbuild→js
 - build:hand:watch　してるので、ファイル保存したら自動ビルドされる
@@ -101,18 +109,23 @@ ts→esbuild→js
 npm run test:ui
 ↑するだけでいい↓が勝手に実行される
 
+```
 npx vitest --ui
 
 - live server起動
 npx playwright test --ui
+```
 
-
-npx vitest
-- vitest
+- npx vitest
   - describe= group
   - it= テスト単体
 <!-- コマンドのオプションいろいろつけるならpackage.json書いてnpm run test -->
 
+### playwright
+npx playwright codegen http://172.20.160.1:5500/hand_gridtypo1.html
+
+
+## テストプロンプト
 以下の条件でVitestのユニットテストを書いてください。vitest-basic.test.ts
 
 - 対象は純粋ロジックのみ
@@ -126,6 +139,16 @@ npx vitest
 1. 面: セル(1,1)が塗り状態になっていること
 2. 辺: 単独セルなので4辺が境界として存在すること
 3. 頂点: 4つの頂点が存在すること
+
+
+- テストvitest追加
+テスト名: セル(1,1)を塗り、頂点(1,1)を頂点(2,2)に移動
+下になるようになったらpassするテスト
+Filled cells (1): 0,0
+Boundary vertices (4): 0,0 0,1 1,0 1,1
+Boundary edges (4): (0,0,0,1) (0,0,1,0) (0,1,1,1) (1,0,1,1)
+
+- playwright版
 
 
 

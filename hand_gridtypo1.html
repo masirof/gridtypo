@@ -62,6 +62,29 @@
       opacity: 0.8;
       margin-bottom: 8px;
     }
+    .tool-bar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .tool-button {
+      width: 36px;
+      height: 36px;
+      border: 1px solid #5e5e5e;
+      background: #2b2b2b;
+      color: #e6e6e6;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      cursor: pointer;
+      padding: 0;
+      border-radius: 0;
+    }
+    .tool-button.active {
+      border-color: #e8481e;
+      color: #e8481e;
+    }
     .lil-gui {
       --background-color: #363636;
       --text-color: #ffffff;
@@ -92,6 +115,15 @@
         <svg id="grid"></svg>
       </div>
       <div class="stage">
+        <div class="tool-bar" id="tool">
+          <button class="tool-button" data-tool="basic" title="Basic Tool">■</button>
+          <button class="tool-button" data-tool="addVertex" title="Add Vertex">+</button>
+          <button class="tool-button" data-tool="deleteVertex" title="Delete Vertex">×</button>
+          <button class="tool-button" data-tool="addEdge" title="Add Edge">━</button>
+          <button class="tool-button" data-tool="deleteEdge" title="Delete Edge">╳</button>
+          <button class="tool-button" data-tool="addFace" title="Add Face">▦</button>
+          <button class="tool-button" data-tool="deleteFace" title="Delete Face">▥</button>
+        </div>
         <div id="gui"></div>
       </div>  
     </div>

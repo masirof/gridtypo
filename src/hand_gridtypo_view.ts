@@ -19,15 +19,22 @@ export function renderGridSvg(svg, state, params, layout) {
   };
 
   const facesGroup = svgEl("g", { "data-layer": "faces" });
+  const extraFacesGroup = svgEl("g", { "data-layer": "extra-faces" });
   const edgesGroup = svgEl("g", { "data-layer": "edges" });
   const dotsGroup = svgEl("g", { "data-layer": "dots" });
   const verticesGroup = svgEl("g", { "data-layer": "vertices" });
+  const extraVerticesGroup = svgEl("g", { "data-layer": "extra-vertices" });
   svg.appendChild(facesGroup);
+  svg.appendChild(extraFacesGroup);
   svg.appendChild(edgesGroup);
   svg.appendChild(dotsGroup);
   svg.appendChild(verticesGroup);
+  svg.appendChild(extraVerticesGroup);
 
   for (const key of state.filledSquares) {
+    if (state.hiddenFaces && state.hiddenFaces.has(key)) {
+      continue;
+    }
     const [cx, cy] = key.split(",").map((v) => Number(v));
     if (Number.isNaN(cx) || Number.isNaN(cy)) {
       continue;
@@ -67,6 +74,34 @@ export function renderGridSvg(svg, state, params, layout) {
     );
   }
 
+  if (state.extraFaces && state.extraFaces.length > 0) {
+    for (const face of state.extraFaces) {
+      const points = [];
+      for (const key of face.vertexKeys || []) {
+        const [vx, vy] = key.split(",").map((v) => Number(v));
+        const v = baseVerts[vy]?.[vx];
+        if (!v) {
+          continue;
+        }
+        points.push(`${v.x},${v.y}`);
+      }
+      if (points.length < 3) {
+        continue;
+      }
+      extraFacesGroup.appendChild(
+        svgEl("polygon", {
+          points: points.join(" "),
+          fill: params.fillColor,
+          "fill-opacity": "0.25",
+          stroke: params.edgeColor,
+          "stroke-width": Math.max(1, Math.floor(params.edgeThickness / 2)),
+          "data-type": "extra-face",
+          "data-face": face.id ?? "",
+        }),
+      );
+    }
+  }
+
   const boundaryVertexKeys = getBoundaryVertexKeys(state, layout);
   for (const key of state.filledSquares) {
     const [cx, cy] = key.split(",").map((v) => Number(v));
@@ -84,7 +119,12 @@ export function renderGridSvg(svg, state, params, layout) {
     const rightKey = `${cx + 1},${cy}`;
     const upKey = `${cx},${cy - 1}`;
     const downKey = `${cx},${cy + 1}`;
+    const leftEdgeKey = `${key}|left`;
+    const rightEdgeKey = `${key}|right`;
+    const topEdgeKey = `${key}|top`;
+    const bottomEdgeKey = `${key}|bottom`;
     if (cx === 0 || !state.filledSquares.has(leftKey)) {
+      if (!state.hiddenEdges || !state.hiddenEdges.has(leftEdgeKey)) {
       edgesGroup.appendChild(
         svgEl("line", {
           x1: v00.x,
@@ -98,8 +138,10 @@ export function renderGridSvg(svg, state, params, layout) {
           "data-cell": key,
         }),
       );
+      }
     }
     if (cx === cols - 2 || !state.filledSquares.has(rightKey)) {
+      if (!state.hiddenEdges || !state.hiddenEdges.has(rightEdgeKey)) {
       edgesGroup.appendChild(
         svgEl("line", {
           x1: v10.x,
@@ -113,8 +155,10 @@ export function renderGridSvg(svg, state, params, layout) {
           "data-cell": key,
         }),
       );
+      }
     }
     if (cy === 0 || !state.filledSquares.has(upKey)) {
+      if (!state.hiddenEdges || !state.hiddenEdges.has(topEdgeKey)) {
       edgesGroup.appendChild(
         svgEl("line", {
           x1: v00.x,
@@ -128,8 +172,10 @@ export function renderGridSvg(svg, state, params, layout) {
           "data-cell": key,
         }),
       );
+      }
     }
     if (cy === rows - 2 || !state.filledSquares.has(downKey)) {
+      if (!state.hiddenEdges || !state.hiddenEdges.has(bottomEdgeKey)) {
       edgesGroup.appendChild(
         svgEl("line", {
           x1: v01.x,
@@ -141,6 +187,36 @@ export function renderGridSvg(svg, state, params, layout) {
           "data-type": "edge",
           "data-edge": "bottom",
           "data-cell": key,
+        }),
+      );
+      }
+    }
+  }
+
+  if (state.extraEdges && state.extraEdges.size > 0) {
+    for (const edgeKey of state.extraEdges) {
+      const parts = edgeKey.split("|");
+      if (parts.length !== 2) {
+        continue;
+      }
+      const [a, b] = parts;
+      const [ax, ay] = a.split(",").map((v) => Number(v));
+      const [bx, by] = b.split(",").map((v) => Number(v));
+      const va = baseVerts[ay]?.[ax];
+      const vb = baseVerts[by]?.[bx];
+      if (!va || !vb) {
+        continue;
+      }
+      edgesGroup.appendChild(
+        svgEl("line", {
+          x1: va.x,
+          y1: va.y,
+          x2: vb.x,
+          y2: vb.y,
+          stroke: params.edgeColor,
+          "stroke-width": params.edgeThickness,
+          "data-type": "extra-edge",
+          "data-edge": edgeKey,
         }),
       );
     }
@@ -169,6 +245,9 @@ export function renderGridSvg(svg, state, params, layout) {
     const drawnPositions = new Set();
     const vertexRadius = Math.max(2, Math.floor(params.edgeThickness));
     for (const vKey of boundaryVertexKeys) {
+      if (state.hiddenVertices && state.hiddenVertices.has(vKey)) {
+        continue;
+      }
       const [vx, vy] = vKey.split(",").map((v) => Number(v));
       const v = verts[vy]?.[vx];
       if (!v) {
@@ -186,6 +265,27 @@ export function renderGridSvg(svg, state, params, layout) {
           r: vertexRadius,
           fill: params.edgeColor,
           "data-type": "vertex",
+          "data-vertex": `${vx},${vy}`,
+        }),
+      );
+    }
+  }
+
+  if (state.extraVertices && state.extraVertices.size > 0) {
+    const extraRadius = Math.max(2, Math.floor(params.edgeThickness) + 1);
+    for (const key of state.extraVertices) {
+      const [vx, vy] = key.split(",").map((v) => Number(v));
+      const v = baseVerts[vy]?.[vx];
+      if (!v) {
+        continue;
+      }
+      extraVerticesGroup.appendChild(
+        svgEl("circle", {
+          cx: v.x,
+          cy: v.y,
+          r: extraRadius,
+          fill: params.edgeColor,
+          "data-type": "extra-vertex",
           "data-vertex": `${vx},${vy}`,
         }),
       );

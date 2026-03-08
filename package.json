@@ -10,7 +10,7 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "build:hand": "esbuild src/hand_gridtypo1.ts --bundle --format=esm --platform=browser --outfile=dist/hand_gridtypo1.js",
     "build:hand:watch": "esbuild src/hand_gridtypo1.ts --bundle --format=esm --platform=browser --outfile=dist/hand_gridtypo1.js --watch",
-    "test:ui": "concurrently -n \"vitest,playwright\" -c \"cyan,magenta\" \"npx vitest --ui --watch\" \"npx playwright test --ui\""
+    "test:ui": "concurrently -n \"build,vitest,playwright\" -c \"yellow,cyan,magenta\" \"npm run build:hand:watch\" \"npx vitest --ui --watch\" \"npx playwright test --ui\""
   },
   "keywords": [],
   "author": "",

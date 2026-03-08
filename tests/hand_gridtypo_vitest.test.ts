@@ -4,7 +4,10 @@ import {
   defaultParams,
   createState,
   buildLayout,
+  computeVerts,
+  getBaseAt,
   clickCellToFill,
+  applyVertexDragRelease,
 } from "../src/hand_gridtypo_core.ts";
 import { renderGridSvg } from "../src/hand_gridtypo_view.ts";
 import { initHandGridtypo1 } from "../src/hand_gridtypo1.ts";
@@ -31,7 +34,7 @@ describe("grid svg", () => {
   it("セル(1,1)を塗って1面・4辺・4頂点が描画される", () => {
     const svg = createSvgWithSize(500);
     const params = { ...defaultParams };
-    const layout = buildLayout(500, 500, params);
+    const layout = buildLayout(556.86, 556.86, params);
     const state = createState();
 
     clickCellToFill(state, "1,1", layout);
@@ -112,5 +115,49 @@ describe("grid svg", () => {
     expect(gridPoints.length).toBe(defaultParams.cols * defaultParams.rows);
 
     delete globalThis.__HAND_GRIDTYPO_GUI__;
+  });
+
+  it("セル(1,1)を塗り、頂点(1,1)を頂点(2,2)に移動", () => {
+    const params = { ...defaultParams };
+    const layout = buildLayout(500, 500, params);
+    const state = createState();
+
+    state.filledSquares.add("1,1");
+
+    const base11 = getBaseAt(1, 1, layout);
+    const base22 = getBaseAt(2, 2, layout);
+    state.vertexOffsets.set("1,1", {
+      dx: base22.x - base11.x,
+      dy: base22.y - base11.y,
+    });
+
+    const { verts } = computeVerts(state, layout);
+    expect(verts[1][1].x).toBeCloseTo(base22.x, 5);
+    expect(verts[1][1].y).toBeCloseTo(base22.y, 5);
+    expect(verts[1][1].y).toBeGreaterThan(base11.y);
+  });
+
+  it("頂点(1,1)を(295.20,291.77)付近へドラッグするとセルが増える", () => {
+    const params = { ...defaultParams };
+    const layout = buildLayout(573.26, 573.26, params);
+    const state = createState();
+    state.filledSquares.add("0,0");
+
+    const targetX = 286.63;
+    const targetY = 286.63;
+
+    const result = applyVertexDragRelease(state, layout, "1,1", targetX, targetY, {
+      magnetRadius: params.magnetRadius,
+      mergeRadius: params.mergeRadius,
+    });
+
+    expect(result.merged).toBe(true);
+    expect(result.autoAdded.length).toBe(4);
+    expect(state.filledSquares.size).toBe(5);
+    expect(state.filledSquares.has("0,0")).toBe(true);
+    expect(state.filledSquares.has("1,1")).toBe(true);
+    expect(state.filledSquares.has("1,2")).toBe(true);
+    expect(state.filledSquares.has("2,1")).toBe(true);
+    expect(state.filledSquares.has("2,2")).toBe(true);
   });
 });
