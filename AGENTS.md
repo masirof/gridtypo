@@ -5,4 +5,5 @@
 エラーを修正したら、起動コマンド使って、エラー出ていないか確認して
 
 # テストを書くとき
-await page.waitForTimeout(100);
+- 最後にsleep処理を挟まないと、正しく描画されない
+  - await page.waitForTimeout(100);
