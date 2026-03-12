@@ -160,6 +160,7 @@ describe("hand_gridtypo の不変条件", () => {
     const layout = buildLayout(500, 500, params);
     const state = createState();
 
+    state.filledSquares.add("1,0");
     state.filledSquares.add("1,1");
     state.filledSquares.add("2,1");
 
@@ -172,6 +173,8 @@ describe("hand_gridtypo の不変条件", () => {
 
     expect(leftPoints[1].x).toBe(rightPoints[0].x);
     expect(leftPoints[2].x).toBe(rightPoints[3].x);
+    expect(leftPoints[1].y).toBe(rightPoints[0].y);
+    expect(leftPoints[2].y).toBe(rightPoints[3].y);
   });
 
   it("頂点を別の交点へ動かすと移動元は移動先に正規化される", () => {

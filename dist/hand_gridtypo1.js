@@ -364,6 +364,16 @@ function renderGridSvg(svg, state, params, layout) {
     }
     return el;
   };
+  const interpolateQuad = (p00, p10, p11, p01, u, v) => {
+    const w00 = (1 - u) * (1 - v);
+    const w10 = u * (1 - v);
+    const w11 = u * v;
+    const w01 = (1 - u) * v;
+    return {
+      x: p00.x * w00 + p10.x * w10 + p11.x * w11 + p01.x * w01,
+      y: p00.y * w00 + p10.y * w10 + p11.y * w11 + p01.y * w01
+    };
+  };
   const facesGroup = svgEl("g", { "data-layer": "faces" });
   const extraFacesGroup = svgEl("g", { "data-layer": "extra-faces" });
   const edgesGroup = svgEl("g", { "data-layer": "edges" });
@@ -396,12 +406,47 @@ function renderGridSvg(svg, state, params, layout) {
     let p2 = { ...v11 };
     let p3 = { ...v01 };
     if (params.fillSize < 0.999) {
-      const cxm = (p0.x + p1.x + p2.x + p3.x) / 4;
-      const cym = (p0.y + p1.y + p2.y + p3.y) / 4;
-      p0 = { x: cxm + (p0.x - cxm) * params.fillSize, y: cym + (p0.y - cym) * params.fillSize };
-      p1 = { x: cxm + (p1.x - cxm) * params.fillSize, y: cym + (p1.y - cym) * params.fillSize };
-      p2 = { x: cxm + (p2.x - cxm) * params.fillSize, y: cym + (p2.y - cym) * params.fillSize };
-      p3 = { x: cxm + (p3.x - cxm) * params.fillSize, y: cym + (p3.y - cym) * params.fillSize };
+      const leftKey = `${cx - 1},${cy}`;
+      const rightKey = `${cx + 1},${cy}`;
+      const upKey = `${cx},${cy - 1}`;
+      const downKey = `${cx},${cy + 1}`;
+      const inset = (1 - params.fillSize) / 2;
+      const leftExposed = cx === 0 || !state.filledSquares.has(leftKey);
+      const rightExposed = cx === cols - 2 || !state.filledSquares.has(rightKey);
+      const topExposed = cy === 0 || !state.filledSquares.has(upKey);
+      const bottomExposed = cy === rows - 2 || !state.filledSquares.has(downKey);
+      p0 = interpolateQuad(
+        v00,
+        v10,
+        v11,
+        v01,
+        leftExposed && topExposed ? inset : 0,
+        leftExposed && topExposed ? inset : 0
+      );
+      p1 = interpolateQuad(
+        v00,
+        v10,
+        v11,
+        v01,
+        rightExposed && topExposed ? 1 - inset : 1,
+        rightExposed && topExposed ? inset : 0
+      );
+      p2 = interpolateQuad(
+        v00,
+        v10,
+        v11,
+        v01,
+        rightExposed && bottomExposed ? 1 - inset : 1,
+        rightExposed && bottomExposed ? 1 - inset : 1
+      );
+      p3 = interpolateQuad(
+        v00,
+        v10,
+        v11,
+        v01,
+        leftExposed && bottomExposed ? inset : 0,
+        leftExposed && bottomExposed ? 1 - inset : 1
+      );
     } else {
       p0 = { x: Math.round(p0.x), y: Math.round(p0.y) };
       p1 = { x: Math.round(p1.x), y: Math.round(p1.y) };
