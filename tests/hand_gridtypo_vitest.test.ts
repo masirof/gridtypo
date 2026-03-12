@@ -5,9 +5,11 @@ import {
   createState,
   buildLayout,
   computeVerts,
-  getBaseAt,
   clickCellToFill,
   applyVertexDragRelease,
+  isEdgeFilled,
+  getBoundaryVertexKeys,
+  clearCellByKey,
 } from "../src/hand_gridtypo_core.ts";
 import { renderGridSvg } from "../src/hand_gridtypo_view.ts";
 import { initHandGridtypo1 } from "../src/hand_gridtypo1.ts";
@@ -30,8 +32,20 @@ const createSvgWithSize = (size) => {
   return svg;
 };
 
-describe("grid svg", () => {
-  it("セル(1,1)を塗って1面・4辺・4頂点が描画される", () => {
+const createMergedVertexState = () => {
+  const params = { ...defaultParams };
+  const layout = buildLayout(573.26, 573.26, params);
+  const state = createState();
+  state.filledSquares.add("0,0");
+  const result = applyVertexDragRelease(state, layout, "1,1", 286.63, 286.63, {
+    magnetRadius: params.magnetRadius,
+    mergeRadius: params.mergeRadius,
+  });
+  return { params, layout, state, result };
+};
+
+describe("hand_gridtypo の不変条件", () => {
+  it("1マス塗ると四角形1つ、辺4本、頂点4つが出る", () => {
     const svg = createSvgWithSize(500);
     const params = { ...defaultParams };
     const layout = buildLayout(556.86, 556.86, params);
@@ -40,29 +54,12 @@ describe("grid svg", () => {
     clickCellToFill(state, "1,1", layout);
     renderGridSvg(svg, state, params, layout);
 
-    const face = svg.querySelector('[data-type="face"][data-cell="1,1"]');
-    expect(face).toBeTruthy();
-
-    const edges = svg.querySelectorAll('[data-type="edge"][data-cell="1,1"]');
-    expect(edges.length).toBe(4);
-
-    const vertices = svg.querySelectorAll('[data-type="vertex"]');
-    expect(vertices.length).toBe(4);
+    expect(svg.querySelector('[data-type="face"][data-cell="1,1"]')).toBeTruthy();
+    expect(svg.querySelectorAll('[data-type="edge"][data-cell="1,1"]').length).toBe(4);
+    expect(svg.querySelectorAll('[data-type="vertex"]').length).toBe(4);
   });
 
-  it("初期描画でグリッド点が生成される", () => {
-    const svg = createSvgWithSize(500);
-    const params = { ...defaultParams };
-    const layout = buildLayout(500, 500, params);
-    const state = createState();
-
-    renderGridSvg(svg, state, params, layout);
-
-    const gridPoints = svg.querySelectorAll('[data-type="grid-point"]');
-    expect(gridPoints.length).toBe(params.cols * params.rows);
-  });
-
-  it("初期描画でグリッド点が生成される 統合テスト", async () => {
+  it("初期化するとグリッド点が正しく並ぶ", async () => {
     class FakeController {
       name() {
         return this;
@@ -72,7 +69,6 @@ describe("grid svg", () => {
       }
     }
     class FakeGUI {
-      constructor() {}
       add() {
         return new FakeController();
       }
@@ -111,53 +107,94 @@ describe("grid svg", () => {
 
     await initHandGridtypo1();
 
-    const gridPoints = svg.querySelectorAll('[data-type="grid-point"]');
-    expect(gridPoints.length).toBe(defaultParams.cols * defaultParams.rows);
+    expect(svg.querySelectorAll('[data-type="grid-point"]').length).toBe(defaultParams.cols * defaultParams.rows);
 
     delete globalThis.__HAND_GRIDTYPO_GUI__;
   });
 
-  it("セル(1,1)を塗り、頂点(1,1)を頂点(2,2)に移動", () => {
+  it("横に2マス塗ると共有している辺は消えて外周だけ残る", () => {
     const params = { ...defaultParams };
     const layout = buildLayout(500, 500, params);
     const state = createState();
 
     state.filledSquares.add("1,1");
+    state.filledSquares.add("2,1");
 
-    const base11 = getBaseAt(1, 1, layout);
-    const base22 = getBaseAt(2, 2, layout);
-    state.vertexOffsets.set("1,1", {
-      dx: base22.x - base11.x,
-      dy: base22.y - base11.y,
-    });
-
-    const { verts } = computeVerts(state, layout);
-    expect(verts[1][1].x).toBeCloseTo(base22.x, 5);
-    expect(verts[1][1].y).toBeCloseTo(base22.y, 5);
-    expect(verts[1][1].y).toBeGreaterThan(base11.y);
+    expect(isEdgeFilled(state, "1,1", "right", layout)).toBe(false);
+    expect(isEdgeFilled(state, "2,1", "left", layout)).toBe(false);
+    expect(isEdgeFilled(state, "1,1", "left", layout)).toBe(true);
+    expect(isEdgeFilled(state, "1,1", "top", layout)).toBe(true);
+    expect(isEdgeFilled(state, "1,1", "bottom", layout)).toBe(true);
+    expect(isEdgeFilled(state, "2,1", "right", layout)).toBe(true);
+    expect(isEdgeFilled(state, "2,1", "top", layout)).toBe(true);
+    expect(isEdgeFilled(state, "2,1", "bottom", layout)).toBe(true);
+    expect(getBoundaryVertexKeys(state, layout).size).toBe(6);
   });
 
-  it("頂点(1,1)を(295.20,291.77)付近へドラッグするとセルが増える", () => {
+  it("2x2で塗ると外周の辺は8本で頂点は8つになる", () => {
+    const svg = createSvgWithSize(500);
     const params = { ...defaultParams };
-    const layout = buildLayout(573.26, 573.26, params);
+    const layout = buildLayout(500, 500, params);
     const state = createState();
-    state.filledSquares.add("0,0");
 
-    const targetX = 286.63;
-    const targetY = 286.63;
+    state.filledSquares.add("1,1");
+    state.filledSquares.add("2,1");
+    state.filledSquares.add("1,2");
+    state.filledSquares.add("2,2");
 
-    const result = applyVertexDragRelease(state, layout, "1,1", targetX, targetY, {
-      magnetRadius: params.magnetRadius,
-      mergeRadius: params.mergeRadius,
-    });
+    renderGridSvg(svg, state, params, layout);
+
+    expect(svg.querySelectorAll('[data-type="edge"]').length).toBe(8);
+    expect(svg.querySelectorAll('[data-type="vertex"]').length).toBe(8);
+  });
+
+  it("頂点を別の交点へ動かすと移動元は移動先に正規化される", () => {
+    const { layout, state, result } = createMergedVertexState();
+    const { verts } = computeVerts(state, layout);
+    const boundaryVertexKeys = getBoundaryVertexKeys(state, layout);
 
     expect(result.merged).toBe(true);
-    expect(result.autoAdded.length).toBe(4);
-    expect(state.filledSquares.size).toBe(5);
-    expect(state.filledSquares.has("0,0")).toBe(true);
-    expect(state.filledSquares.has("1,1")).toBe(true);
-    expect(state.filledSquares.has("1,2")).toBe(true);
-    expect(state.filledSquares.has("2,1")).toBe(true);
-    expect(state.filledSquares.has("2,2")).toBe(true);
+    expect(result.autoAdded.sort()).toEqual(["1,1", "1,2", "2,1", "2,2"]);
+    expect(state.mergedTo.get("1,1")).toBe("2,2");
+    expect(verts[1][1].x).toBeCloseTo(verts[2][2].x, 5);
+    expect(verts[1][1].y).toBeCloseTo(verts[2][2].y, 5);
+    expect(boundaryVertexKeys.has("1,1")).toBe(false);
+    expect(boundaryVertexKeys.has("2,2")).toBe(true);
+  });
+
+  it("頂点を結合したあとに描画しても同じ場所に頂点が重ならない", () => {
+    const svg = createSvgWithSize(500);
+    const { params, layout, state, result } = createMergedVertexState();
+
+    expect(result.merged).toBe(true);
+
+    renderGridSvg(svg, state, params, layout);
+
+    const vertices = Array.from(svg.querySelectorAll('[data-type="vertex"]'));
+    const positions = vertices.map((vertex) => {
+      const cx = Number(vertex.getAttribute("cx"));
+      const cy = Number(vertex.getAttribute("cy"));
+      return `${Math.round(cx)}|${Math.round(cy)}`;
+    });
+
+    expect(new Set(positions).size).toBe(vertices.length);
+  });
+
+  it("頂点を結合したあとにマスを消すと不要な移動記録も消える", () => {
+    const { layout, state, result } = createMergedVertexState();
+
+    expect(result.merged).toBe(true);
+    expect(state.mergedTo.get("1,1")).toBe("2,2");
+    expect(state.vertexOffsets.has("2,2")).toBe(true);
+
+    clearCellByKey(state, "0,0");
+
+    expect(state.filledSquares.has("0,0")).toBe(false);
+    expect(state.vertexOffsets.has("1,1")).toBe(false);
+    expect(state.mergedTo.has("1,1")).toBe(false);
+
+    const boundaryVertexKeys = getBoundaryVertexKeys(state, layout);
+    expect(boundaryVertexKeys.has("1,1")).toBe(true);
+    expect(boundaryVertexKeys.has("2,2")).toBe(false);
   });
 });
