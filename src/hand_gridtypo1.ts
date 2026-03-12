@@ -71,8 +71,33 @@ export async function initHandGridtypo1() {
         const hiddenFaces = state.hiddenFaces ? state.hiddenFaces : new Set();
         const hiddenVertices = state.hiddenVertices ? state.hiddenVertices : new Set();
         const hiddenEdges = state.hiddenEdges ? state.hiddenEdges : new Set();
-        const filledList = Array.from(state.filledSquares.values())
-          .filter((key) => !hiddenFaces.has(key))
+        const filledSet = new Set(
+          Array.from(state.filledSquares.values()).filter((key) => !hiddenFaces.has(key)),
+        );
+        if (lastLayout) {
+          const rootKeys = new Set();
+          for (const key of state.vertexOffsets.keys()) {
+            rootKeys.add(getRootVertex(state, key));
+          }
+          for (const target of state.mergedTo.values()) {
+            rootKeys.add(getRootVertex(state, target));
+          }
+          for (const rootKey of rootKeys) {
+            const [rx, ry] = rootKey.split(",").map((v) => Number(v));
+            if (Number.isNaN(rx) || Number.isNaN(ry)) {
+              continue;
+            }
+            const cellKey = `${rx - 1},${ry - 1}`;
+            if (!hiddenFaces.has(cellKey)) {
+              filledSet.add(cellKey);
+            }
+          }
+        }
+        const filledList = Array.from(filledSet)
+          .filter((key) => {
+            const [cx, cy] = key.split(",").map((v) => Number(v));
+            return !Number.isNaN(cx) && !Number.isNaN(cy) && cx >= 0 && cy >= 0;
+          })
           .sort();
         const movedList = [];
         for (const [key, offset] of state.vertexOffsets.entries()) {

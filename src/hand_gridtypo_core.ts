@@ -159,18 +159,7 @@ export function applyVertexDragRelease(state, layout, draggingKey, targetX, targ
         state.mergedTo.set(draggingKey, targetRoot);
         state.vertexOffsets.set(targetRoot, { dx: mergeCandidate.x - targetBase.x, dy: mergeCandidate.y - targetBase.y });
         state.vertexOffsets.delete(draggingKey);
-        const upDist = Math.hypot(targetX - mergeCandidate.x, targetY - mergeCandidate.y);
-        const autoAdded = [];
-        if (upDist <= mergeRadius) {
-          const cellKeys = getCellKeysFromPosition(mergeCandidate.x, mergeCandidate.y, layout);
-          for (const cellKey of cellKeys) {
-            if (!state.filledSquares.has(cellKey)) {
-              state.filledSquares.add(cellKey);
-              autoAdded.push(cellKey);
-            }
-          }
-        }
-        return { merged: true, autoAdded, targetKey: targetRoot, snapped: mergeCandidate };
+        return { merged: true, autoAdded: [], targetKey: targetRoot, snapped: mergeCandidate };
       }
     }
   }

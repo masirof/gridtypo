@@ -147,18 +147,7 @@ function applyVertexDragRelease(state, layout, draggingKey, targetX, targetY, op
         state.mergedTo.set(draggingKey, targetRoot);
         state.vertexOffsets.set(targetRoot, { dx: mergeCandidate.x - targetBase.x, dy: mergeCandidate.y - targetBase.y });
         state.vertexOffsets.delete(draggingKey);
-        const upDist = Math.hypot(targetX - mergeCandidate.x, targetY - mergeCandidate.y);
-        const autoAdded = [];
-        if (upDist <= mergeRadius) {
-          const cellKeys = getCellKeysFromPosition(mergeCandidate.x, mergeCandidate.y, layout);
-          for (const cellKey of cellKeys) {
-            if (!state.filledSquares.has(cellKey)) {
-              state.filledSquares.add(cellKey);
-              autoAdded.push(cellKey);
-            }
-          }
-        }
-        return { merged: true, autoAdded, targetKey: targetRoot, snapped: mergeCandidate };
+        return { merged: true, autoAdded: [], targetKey: targetRoot, snapped: mergeCandidate };
       }
     }
   }
@@ -674,7 +663,32 @@ async function initHandGridtypo1() {
     const hiddenFaces = state.hiddenFaces ? state.hiddenFaces : /* @__PURE__ */ new Set();
     const hiddenVertices = state.hiddenVertices ? state.hiddenVertices : /* @__PURE__ */ new Set();
     const hiddenEdges = state.hiddenEdges ? state.hiddenEdges : /* @__PURE__ */ new Set();
-    const filledList = Array.from(state.filledSquares.values()).filter((key) => !hiddenFaces.has(key)).sort();
+    const filledSet = new Set(
+      Array.from(state.filledSquares.values()).filter((key) => !hiddenFaces.has(key))
+    );
+    if (lastLayout) {
+      const rootKeys = /* @__PURE__ */ new Set();
+      for (const key of state.vertexOffsets.keys()) {
+        rootKeys.add(getRootVertex(state, key));
+      }
+      for (const target of state.mergedTo.values()) {
+        rootKeys.add(getRootVertex(state, target));
+      }
+      for (const rootKey of rootKeys) {
+        const [rx, ry] = rootKey.split(",").map((v) => Number(v));
+        if (Number.isNaN(rx) || Number.isNaN(ry)) {
+          continue;
+        }
+        const cellKey = `${rx - 1},${ry - 1}`;
+        if (!hiddenFaces.has(cellKey)) {
+          filledSet.add(cellKey);
+        }
+      }
+    }
+    const filledList = Array.from(filledSet).filter((key) => {
+      const [cx, cy] = key.split(",").map((v) => Number(v));
+      return !Number.isNaN(cx) && !Number.isNaN(cy) && cx >= 0 && cy >= 0;
+    }).sort();
     const movedList = [];
     for (const [key, offset] of state.vertexOffsets.entries()) {
       movedList.push(`${key} dx=${offset.dx.toFixed(2)} dy=${offset.dy.toFixed(2)}`);

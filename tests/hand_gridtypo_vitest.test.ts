@@ -154,7 +154,7 @@ describe("hand_gridtypo の不変条件", () => {
     const boundaryVertexKeys = getBoundaryVertexKeys(state, layout);
 
     expect(result.merged).toBe(true);
-    expect(result.autoAdded.sort()).toEqual(["1,1", "1,2", "2,1", "2,2"]);
+    expect(result.autoAdded).toEqual([]);
     expect(state.mergedTo.get("1,1")).toBe("2,2");
     expect(verts[1][1].x).toBeCloseTo(verts[2][2].x, 5);
     expect(verts[1][1].y).toBeCloseTo(verts[2][2].y, 5);
@@ -190,11 +190,13 @@ describe("hand_gridtypo の不変条件", () => {
     clearCellByKey(state, "0,0");
 
     expect(state.filledSquares.has("0,0")).toBe(false);
+    expect(state.filledSquares.size).toBe(0);
     expect(state.vertexOffsets.has("1,1")).toBe(false);
+    expect(state.vertexOffsets.has("2,2")).toBe(false);
     expect(state.mergedTo.has("1,1")).toBe(false);
 
     const boundaryVertexKeys = getBoundaryVertexKeys(state, layout);
-    expect(boundaryVertexKeys.has("1,1")).toBe(true);
+    expect(boundaryVertexKeys.size).toBe(0);
     expect(boundaryVertexKeys.has("2,2")).toBe(false);
   });
 });
