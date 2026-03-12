@@ -18,6 +18,53 @@ export function renderGridSvg(svg, state, params, layout) {
     return el;
   };
 
+  const buildBoundaryFillPath = (segments) => {
+    const keyOf = (point) => `${point.x.toFixed(4)},${point.y.toFixed(4)}`;
+    const outgoing = new Map();
+    const unused = new Set();
+
+    segments.forEach((segment, index) => {
+      unused.add(index);
+      const startKey = keyOf(segment.start);
+      if (!outgoing.has(startKey)) {
+        outgoing.set(startKey, []);
+      }
+      outgoing.get(startKey).push({ ...segment, index });
+    });
+
+    const paths = [];
+    while (unused.size > 0) {
+      const [firstIndex] = unused;
+      const first = segments[firstIndex];
+      const startKey = keyOf(first.start);
+      let currentKey = keyOf(first.end);
+      let currentPoint = first.end;
+      const points = [first.start, first.end];
+      unused.delete(firstIndex);
+
+      while (currentKey !== startKey) {
+        const candidates = outgoing.get(currentKey) || [];
+        const next = candidates.find((candidate) => unused.has(candidate.index));
+        if (!next) {
+          break;
+        }
+        unused.delete(next.index);
+        currentKey = keyOf(next.end);
+        currentPoint = next.end;
+        points.push(currentPoint);
+      }
+
+      if (points.length >= 3 && currentKey === startKey) {
+        const d = points
+          .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
+          .join(" ");
+        paths.push(`${d} Z`);
+      }
+    }
+
+    return paths.join(" ");
+  };
+
   const interpolateQuad = (p00, p10, p11, p01, u, v) => {
     const w00 = (1 - u) * (1 - v);
     const w10 = u * (1 - v);
@@ -28,6 +75,9 @@ export function renderGridSvg(svg, state, params, layout) {
       y: p00.y * w00 + p10.y * w10 + p11.y * w11 + p01.y * w01,
     };
   };
+
+  const overlapU = Math.min(0.02, 1 / Math.max(1, layout.cellW));
+  const overlapV = Math.min(0.02, 1 / Math.max(1, layout.cellH));
 
   const facesGroup = svgEl("g", { "data-layer": "faces" });
   const extraFacesGroup = svgEl("g", { "data-layer": "extra-faces" });
@@ -41,6 +91,8 @@ export function renderGridSvg(svg, state, params, layout) {
   svg.appendChild(dotsGroup);
   svg.appendChild(verticesGroup);
   svg.appendChild(extraVerticesGroup);
+
+  const boundaryFillSegments = [];
 
   for (const key of state.filledSquares) {
     if (state.hiddenFaces && state.hiddenFaces.has(key)) {
@@ -110,13 +162,45 @@ export function renderGridSvg(svg, state, params, layout) {
       p3 = { x: Math.round(p3.x), y: Math.round(p3.y) };
     }
     const points = `${p0.x},${p0.y} ${p1.x},${p1.y} ${p2.x},${p2.y} ${p3.x},${p3.y}`;
+    const leftKey = `${cx - 1},${cy}`;
+    const rightKey = `${cx + 1},${cy}`;
+    const upKey = `${cx},${cy - 1}`;
+    const downKey = `${cx},${cy + 1}`;
+    if (params.fillSize >= 0.999) {
+      if (cy === 0 || !state.filledSquares.has(upKey)) {
+        boundaryFillSegments.push({ start: p0, end: p1 });
+      }
+      if (cx === cols - 2 || !state.filledSquares.has(rightKey)) {
+        boundaryFillSegments.push({ start: p1, end: p2 });
+      }
+      if (cy === rows - 2 || !state.filledSquares.has(downKey)) {
+        boundaryFillSegments.push({ start: p2, end: p3 });
+      }
+      if (cx === 0 || !state.filledSquares.has(leftKey)) {
+        boundaryFillSegments.push({ start: p3, end: p0 });
+      }
+    }
     facesGroup.appendChild(
       svgEl("polygon", {
         points,
-        fill: params.fillColor,
+        fill: params.fillSize >= 0.999 ? "transparent" : params.fillColor,
+        "shape-rendering": "crispEdges",
         "data-type": "face",
         "data-cell": key,
       }),
+    );
+  }
+
+  if (boundaryFillSegments.length > 0) {
+    const pathData = buildBoundaryFillPath(boundaryFillSegments);
+    facesGroup.insertBefore(
+      svgEl("path", {
+        d: pathData,
+        fill: params.fillColor,
+        "shape-rendering": "crispEdges",
+        "data-type": "merged-face-fill",
+      }),
+      facesGroup.firstChild,
     );
   }
 

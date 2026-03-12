@@ -1,3 +1,6 @@
 node_modules
 test-results/.last-run.json
 lib/opencv/opencv.js
+test-results/hand_gridtypo1_playwright-セル2つの隙間がないか/error-context.md
+test-results/hand_gridtypo1_playwright-セル2つの隙間がないか/trace.zip
+test-results/hand_gridtypo1-after.png

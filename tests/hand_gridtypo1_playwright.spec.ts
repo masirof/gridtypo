@@ -208,8 +208,12 @@ test("セル2つの隙間がないか", async ({ page }) => {
 
     const left = document.querySelector('[data-type="face"][data-cell="0,0"]');
     const right = document.querySelector('[data-type="face"][data-cell="1,0"]');
+    const svg = document.getElementById("grid");
     if (!(left instanceof SVGPolygonElement) || !(right instanceof SVGPolygonElement)) {
       throw new Error("Expected two face polygons");
+    }
+    if (!(svg instanceof SVGSVGElement)) {
+      throw new Error("Grid svg not found");
     }
 
     const leftPoints = parsePoints(left.getAttribute("points"));
@@ -220,6 +224,8 @@ test("セル2つの隙間がないか", async ({ page }) => {
     const rightSharedBottom = rightPoints[3];
 
     return {
+      svgWidth: Number(svg.getAttribute("width")) || svg.clientWidth,
+      svgHeight: Number(svg.getAttribute("height")) || svg.clientHeight,
       seamX: (leftSharedTop.x + rightSharedTop.x + leftSharedBottom.x + rightSharedBottom.x) / 4,
       topY: Math.max(leftSharedTop.y, rightSharedTop.y),
       bottomY: Math.min(leftSharedBottom.y, rightSharedBottom.y),
@@ -228,15 +234,16 @@ test("セル2つの隙間がないか", async ({ page }) => {
     };
   });
 
-  const dpr = await page.evaluate(() => window.devicePixelRatio);
   const screenshot = await grid.screenshot();
   const png = parsePng(screenshot);
-  const seamX = Math.round(seam.seamX * dpr);
-  const leftInnerX = Math.round(seam.leftInnerX * dpr);
-  const rightInnerX = Math.round(seam.rightInnerX * dpr);
-  const step = Math.max(1, Math.round(dpr));
-  const topY = Math.round((seam.topY + 4) * dpr);
-  const bottomY = Math.round((seam.bottomY - 4) * dpr);
+  const scaleX = png.width / seam.svgWidth;
+  const scaleY = png.height / seam.svgHeight;
+  const seamX = Math.round(seam.seamX * scaleX);
+  const leftInnerX = Math.round(seam.leftInnerX * scaleX);
+  const rightInnerX = Math.round(seam.rightInnerX * scaleX);
+  const step = Math.max(1, Math.round(scaleY));
+  const topY = Math.round((seam.topY + 18) * scaleY);
+  const bottomY = Math.round((seam.bottomY - 18) * scaleY);
 
   let worstDistance = 0;
   for (let y = topY; y <= bottomY; y += step) {
