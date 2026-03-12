@@ -32,6 +32,12 @@ const createSvgWithSize = (size) => {
   return svg;
 };
 
+const parsePolygonPoints = (pointsText) =>
+  (pointsText ?? "").split(" ").map((pair) => {
+    const [x, y] = pair.split(",").map(Number);
+    return { x, y };
+  });
+
 const createMergedVertexState = () => {
   const params = { ...defaultParams };
   const layout = buildLayout(573.26, 573.26, params);
@@ -146,6 +152,26 @@ describe("hand_gridtypo の不変条件", () => {
 
     expect(svg.querySelectorAll('[data-type="edge"]').length).toBe(8);
     expect(svg.querySelectorAll('[data-type="vertex"]').length).toBe(8);
+  });
+
+  it("横に並ぶ2セルは塗りを小さくしても間に隙間ができない", () => {
+    const svg = createSvgWithSize(500);
+    const params = { ...defaultParams, fillSize: 0.8 };
+    const layout = buildLayout(500, 500, params);
+    const state = createState();
+
+    state.filledSquares.add("1,1");
+    state.filledSquares.add("2,1");
+
+    renderGridSvg(svg, state, params, layout);
+
+    const leftFace = svg.querySelector('[data-type="face"][data-cell="1,1"]');
+    const rightFace = svg.querySelector('[data-type="face"][data-cell="2,1"]');
+    const leftPoints = parsePolygonPoints(leftFace?.getAttribute("points"));
+    const rightPoints = parsePolygonPoints(rightFace?.getAttribute("points"));
+
+    expect(leftPoints[1].x).toBe(rightPoints[0].x);
+    expect(leftPoints[2].x).toBe(rightPoints[3].x);
   });
 
   it("頂点を別の交点へ動かすと移動元は移動先に正規化される", () => {
